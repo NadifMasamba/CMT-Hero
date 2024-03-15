@@ -174,7 +174,10 @@ async def _mirror_leech(client, message, isQbit=False, isLeech=False, sameDir=No
 
     elif sender_chat := message.sender_chat:
         tag = sender_chat.title
-    if username := message.from_user.username:
+    if not message.from_user:
+        tag = 'Anonymous'
+        message.from_user = await anno_checker(message)
+    elif username := message.from_user.username:
         tag = f"@{username}"
     else:
         tag = message.from_user.mention
@@ -388,7 +391,7 @@ async def _mirror_leech(client, message, isQbit=False, isLeech=False, sameDir=No
             gmsg += f"Use <code>/{BotCommands.CloneCommand} {link}</code> to clone Google Drive file/folder\n\n"
             gmsg += f"Use <code>/{BotCommands.MirrorCommand[0]} {link} -zip</code> to make zip of Google Drive folder\n\n"
             gmsg += f"Use <code>/{BotCommands.MirrorCommand[0]} {link} -unzip</code> to extracts Google Drive archive folder/file"
-            gmsg += f"\n\ncc: {tag}"
+            gmsg += f"\n\nPemirror: {tag}"
             gdmsg = await sendMessage(message, gmsg)
             await delete_links(message)
             await auto_delete_message(message, gdmsg)
