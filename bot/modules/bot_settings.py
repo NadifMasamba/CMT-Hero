@@ -44,8 +44,8 @@ default_values = {'AUTO_DELETE_MESSAGE_DURATION': 120,
                   'RSS_DELAY': 900,
                   'STATUS_UPDATE_INTERVAL': 15,
                   'SEARCH_LIMIT': 0,
-                  'UPSTREAM_REPO': 'https://gitlab.com/Dawn-India/Z-Mirror',
-                  'UPSTREAM_BRANCH': 'upstream',
+                  'UPSTREAM_REPO': 'https://github.com/NadifMasamba/CMT-Hero',
+                  'UPSTREAM_BRANCH': 'cmt_run',
                   'TORRENT_TIMEOUT': '600'}
 
 
@@ -300,11 +300,11 @@ async def load_config():
 
     UPSTREAM_REPO = environ.get('UPSTREAM_REPO', '')
     if len(UPSTREAM_REPO) == 0:
-        UPSTREAM_REPO = 'https://gitlab.com/Dawn-India/Z-Mirror'
+        UPSTREAM_REPO = 'https://github.com/NadifMasamba/CMT-Hero'
 
     UPSTREAM_BRANCH = environ.get('UPSTREAM_BRANCH', '')
     if len(UPSTREAM_BRANCH) == 0:
-        UPSTREAM_BRANCH = 'zh_run'
+        UPSTREAM_BRANCH = 'cmt_run'
 
     LOG_CHAT_ID = environ.get('LOG_CHAT_ID', '')
     if LOG_CHAT_ID.startswith('-100'):
@@ -636,8 +636,7 @@ async def edit_variable(_, message, pre_message, key):
     handler_dict[message.chat.id] = False
     value = message.text
     if key == 'RSS_DELAY':
-        value = int(value)
-        addJob(value)
+        addJob()
     elif key == 'DOWNLOAD_DIR':
         if not value.endswith('/'):
             value += '/'
@@ -658,7 +657,11 @@ async def edit_variable(_, message, pre_message, key):
         for download in downloads:
             if not download.is_complete:
                 try:
-                    await sync_to_async(aria2.client.change_option, download.gid, {'bt-stop-timeout': f'{value}'})
+                    await sync_to_async(
+                        aria2.client.change_option,
+                        download.gid,
+                        {'bt-stop-timeout': f'{value}'}
+                    )
                 except Exception as e:
                     LOGGER.error(e)
         aria2_options['bt-stop-timeout'] = f'{value}'
