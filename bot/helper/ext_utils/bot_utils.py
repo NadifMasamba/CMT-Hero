@@ -194,7 +194,7 @@ def get_readable_message():
             dl_speed += speed_in_bytes_per_second
         elif tstatus == MirrorStatus.STATUS_UPLOADING or tstatus == MirrorStatus.STATUS_SEEDING:
             up_speed += speed_in_bytes_per_second          
-    msg += f"\n"<href='https://saweria.co/peamasamba'>═══❰ Donate ❱═══"
+    msg += f"\n══❰ 𝐁𝐨𝐭 𝐌𝐢𝐫𝐫𝐨𝐫 𝐂𝐌𝐓 ❱══"
     msg += f"\n<b>🄳🅻</b>: <code>{get_readable_file_size(dl_speed)}/s</code>⧩"
     msg += f" | <b>🅄🅻</b>: <code>{get_readable_file_size(up_speed)}/s</code>◭"
     if tasks <= STATUS_LIMIT:
