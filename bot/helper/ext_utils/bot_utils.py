@@ -101,7 +101,7 @@ def bt_selection_buttons(id_, isCanCncl=True):
 
 async def get_telegraph_list(telegraph_content):
     path = [(await telegraph.create_page(
-        title='Z Drive Search', content=content))["path"] for content in telegraph_content]
+        title='Pea Masamba Drive Search', content=content))["path"] for content in telegraph_content]
     if len(path) > 1:
         await telegraph.edit_telegraph(path, telegraph_content)
     buttons = ButtonMaker()
@@ -121,7 +121,7 @@ def get_progress_bar_string(pct):
 
 
 def get_readable_message():
-    msg = "<a href='https://saweria.co/peamasamba'>𝐃𝐨𝐧𝐚𝐭𝐞</a>\n"
+    msg = ""
     button = None
     STATUS_LIMIT = config_dict['STATUS_LIMIT']
     tasks = len(download_dict)
@@ -193,8 +193,8 @@ def get_readable_message():
         if tstatus == MirrorStatus.STATUS_DOWNLOADING:
             dl_speed += speed_in_bytes_per_second
         elif tstatus == MirrorStatus.STATUS_UPLOADING or tstatus == MirrorStatus.STATUS_SEEDING:
-            up_speed += speed_in_bytes_per_second
-    msg += f"\n══❰ 𝐁𝐨𝐭 𝐌𝐢𝐫𝐫𝐨𝐫 𝐂𝐌𝐓 ❱══"       
+            up_speed += speed_in_bytes_per_second          
+    msg += f"\n"<a href='https://saweria.co/peamasamba'>═══❰ Donate ❱═══</a>"
     msg += f"\n<b>🄳🅻</b>: <code>{get_readable_file_size(dl_speed)}/s</code>⧩"
     msg += f" | <b>🅄🅻</b>: <code>{get_readable_file_size(up_speed)}/s</code>◭"
     if tasks <= STATUS_LIMIT:
