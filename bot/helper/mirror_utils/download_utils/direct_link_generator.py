@@ -79,7 +79,8 @@ def direct_link_generator(link):
     elif any(x in domain for x in ['dood.watch', 'doodstream.com', 'dood.to', 'dood.so', 'dood.cx',
                                    'dood.la', 'dood.ws', 'dood.sh', 'doodstream.co', 'dood.pm',
                                    'dood.wf', 'dood.re', 'dood.video', 'dooood.com', 'dood.yt',
-                                   'doods.yt', 'dood.stream', 'doods.pro', 'ds2play.com']):
+                                   'doods.yt', 'dood.stream', 'doods.pro', 'd0o0d.com', 'ds2video.com', 
+                                   'do0od.com', 'ds2play.com']):
         return doods(link)
     elif any(x in domain for x in ['streamtape.com', 'streamtape.co', 'streamtape.cc', 'streamtape.to', 'streamtape.net',
                                    'streamta.pe', 'streamtape.xyz']):
@@ -87,7 +88,7 @@ def direct_link_generator(link):
     elif any(x in domain for x in ['wetransfer.com', 'we.tl']):
         return wetransfer(link)
     elif any(x in domain for x in ['terabox.com', 'nephobox.com', '4funbox.com', 'mirrobox.com', 'momerybox.com',
-                                   'teraboxapp.com', '1024tera.com', 'terabox.app', 'goaibox.com']):
+                                   'teraboxapp.com', '1024tera.com', 'terabox.app', 'gibibox.com', 'goaibox.com']):
         return terabox(link)
     elif any(x in domain for x in ['cabecabean.lol', 'embedwish.com', 'filelions.co', 'filelions.live',
                                    'filelions.to', 'filelions.online', 'filelions.site', 'kitabmarkaz.xyz',
@@ -762,12 +763,12 @@ def gofile(url):
 
     def __get_token(session):
         headers = {
-            "User-Agent": userAgent,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
         }
-        __url = "https://api.gofile.io/createAccount"
+        __url = "https://api.gofile.io/accounts"
         try:
             __res = session.post(__url, headers=headers).json()
             if __res["status"] != "ok":
@@ -779,7 +780,7 @@ def gofile(url):
     def __fetch_links(session, _id, folderPath=""):
         _url = f"https://api.gofile.io/contents/{_id}?wt=4fd6sg89d7s6&cache=true"
         headers = {
-            "User-Agent": userAgent,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
@@ -807,30 +808,23 @@ def gofile(url):
         if not details["title"]:
             details["title"] = data["name"] if data["type"] == "folder" else _id  
 
-        contents = data["children"]
-        for content in contents.values():
-            if content["type"] == "folder":
-                if not content["public"]:
-                    continue
-                if not folderPath:
-                    newFolderPath = ospath.join(details["title"], content["name"])
+        if data["type"] == "folder":
+            children_ids = data["childrenIds"]
+            for child_id in children_ids:
+                child = data["children"][child_id]
+                if data["children"][child_id]["type"] == "folder":
+                    __fetch_links(child["code"], token)
                 else:
-                    newFolderPath = ospath.join(folderPath, content["name"])
-                __fetch_links(content["id"], newFolderPath)
-            else:
-                if not folderPath:
-                    folderPath = details["title"]
-                item = {
-                    "path": ospath.join(folderPath),
-                    "filename": content["name"],
-                    "url": content["link"],
-                }
-                if "size" in content:
-                    size = content["size"]
-                    if isinstance(size, str) and size.isdigit():
-                        size = float(size)
-                    details["total_size"] += size
-                details["contents"].append(item)
+                    item = {
+                        "filename": child["name"],
+                        "url": child["link"],
+                        }
+                    if "size" in child:
+                        size = child["size"]
+                        if isinstance(size, str) and size.isdigit():
+                            size = float(size)
+                        details["total_size"] += size
+            details["contents"].append(item)
 
     details = {"contents": [], "title": "", "total_size": 0}
     with Session() as session:
@@ -962,18 +956,17 @@ def mediafireFolder(url):
 def cf_bypass(url):
     "DO NOT ABUSE THIS"
     try:
-        data = {"cmd": "request.get", "url": url, "maxTimeout": 60000}
-        _json = post(
-            "https://cf.jmdkh.eu.org/v1",
-            headers={"Content-Type": "application/json"},
-            json=data,
-        ).json()
-        if _json["status"] == "ok":
-            return _json["solution"]["response"]
+        data = {
+            "cmd": "request.get",
+            "url": url,
+            "maxTimeout": 60000
+        }
+        _json = post("https://cf.jmdkh.eu.org/v1", headers={"Content-Type": "application/json"}, json=data).json()
+        if _json['status'] == 'ok':
+            return _json['solution']["response"]
     except Exception as e:
-        raise DirectDownloadLinkException(
-            f"ERROR: Tidak bisa bypass CloudFlare! -> {e}"
-        )
+        e
+    raise DirectDownloadLinkException("ERROR: Con't bypass cloudflare")
 
 def send_cm_file(url, file_id=None):
     if "::" in url:
