@@ -121,7 +121,7 @@ def get_progress_bar_string(pct):
 
 
 def get_readable_message():
-    msg = ""
+    msg = "<a href='https://saweria.co/peamasamba'>𝐃𝐨𝐧𝐚𝐭𝐞</a>\n"
     button = None
     STATUS_LIMIT = config_dict['STATUS_LIMIT']
     tasks = len(download_dict)
