@@ -758,51 +758,56 @@ def gofile(url):
             _password = ""
         _id = url.split("/")[-1]
     except Exception as e:
-        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
 
     def __get_token(session):
-        if "gofile_token" in _caches:
-            __url = f"https://api.gofile.io/getAccountDetails?token={_caches['gofile_token']}"
-        else:
-            __url = "https://api.gofile.io/createAccount"
+        headers = {
+            "User-Agent": userAgent,
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept": "*/*",
+            "Connection": "keep-alive",
+        }
+        __url = "https://api.gofile.io/accounts"
         try:
-            __res = session.get(__url).json()
+            __res = session.post(__url, headers=headers).json()
             if __res["status"] != "ok":
-                if "gofile_token" in _caches:
-                    del _caches["gofile_token"]
-                return __get_token(session)
-            _caches["gofile_token"] = __res["data"]["token"]
-            return _caches["gofile_token"]
+                raise DirectDownloadLinkException("ERROR: Token tidak ditemukan!")
+            return __res["data"]["token"]
         except Exception as e:
             raise e
 
     def __fetch_links(session, _id, folderPath=""):
-        _url = f"https://api.gofile.io/getContent?contentId={_id}&token={token}&wt=4fd6sg89d7s6&cache=true"
+        _url = f"https://api.gofile.io/contents/{_id}?wt=4fd6sg89d7s6&cache=true"
+        headers = {
+            "User-Agent": userAgent,
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept": "*/*",
+            "Connection": "keep-alive",
+            "Authorization": "Bearer" + " " + token,
+        }
         if _password:
             _url += f"&password={_password}"
         try:
-            _json = session.get(_url).json()
+            _json = session.get(_url, headers=headers, verify=False).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
         if _json["status"] in "error-passwordRequired":
             raise DirectDownloadLinkException(
-                f"ERROR:\n{PASSWORD_ERROR_MESSAGE.format(url)}"
+                f"ERROR: {PASSWORD_ERROR_MESSAGE.format(url)}"
             )
         if _json["status"] in "error-passwordWrong":
-            raise DirectDownloadLinkException("ERROR: This password is wrong !")
+            raise DirectDownloadLinkException("ERROR: Password salah!")
         if _json["status"] in "error-notFound":
-            raise DirectDownloadLinkException(
-                "ERROR: File not found on gofile's server"
-            )
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
         if _json["status"] in "error-notPublic":
-            raise DirectDownloadLinkException("ERROR: This folder is not public")
+            raise DirectDownloadLinkException("ERROR: Folder tidak dapat diunduh!")
 
         data = _json["data"]
 
         if not details["title"]:
-            details["title"] = data["name"] if data["type"] == "folder" else _id
+            details["title"] = data["name"] if data["type"] == "folder" else _id  
 
-        contents = data["contents"]
+        contents = data["children"]
         for content in contents.values():
             if content["type"] == "folder":
                 if not content["public"]:
@@ -811,7 +816,7 @@ def gofile(url):
                     newFolderPath = ospath.join(details["title"], content["name"])
                 else:
                     newFolderPath = ospath.join(folderPath, content["name"])
-                __fetch_links(session, content["id"], newFolderPath)
+                __fetch_links(content["id"], newFolderPath)
             else:
                 if not folderPath:
                     folderPath = details["title"]
@@ -832,12 +837,12 @@ def gofile(url):
         try:
             token = __get_token(session)
         except Exception as e:
-            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
         details["header"] = f"Cookie: accountToken={token}"
         try:
             __fetch_links(session, _id)
         except Exception as e:
-            raise DirectDownloadLinkException(e)
+            raise DirectDownloadLinkException (f"ERROR: {e}")
 
     if len(details["contents"]) == 1:
         return (details["contents"][0]["url"], details["header"])
@@ -957,17 +962,18 @@ def mediafireFolder(url):
 def cf_bypass(url):
     "DO NOT ABUSE THIS"
     try:
-        data = {
-            "cmd": "request.get",
-            "url": url,
-            "maxTimeout": 60000
-        }
-        _json = post("https://cf.jmdkh.eu.org/v1", headers={"Content-Type": "application/json"}, json=data).json()
-        if _json['status'] == 'ok':
-            return _json['solution']["response"]
+        data = {"cmd": "request.get", "url": url, "maxTimeout": 60000}
+        _json = post(
+            "https://cf.jmdkh.eu.org/v1",
+            headers={"Content-Type": "application/json"},
+            json=data,
+        ).json()
+        if _json["status"] == "ok":
+            return _json["solution"]["response"]
     except Exception as e:
-        e
-    raise DirectDownloadLinkException("ERROR: Con't bypass cloudflare")
+        raise DirectDownloadLinkException(
+            f"ERROR: Tidak bisa bypass CloudFlare! -> {e}"
+        )
 
 def send_cm_file(url, file_id=None):
     if "::" in url:
