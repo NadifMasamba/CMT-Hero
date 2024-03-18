@@ -1,175 +1,561 @@
 from base64 import b64decode
+from bs4 import BeautifulSoup
+from cloudscraper import create_scraper
 from hashlib import sha256
 from http.cookiejar import MozillaCookieJar
 from json import loads
-from os import path
-from re import findall, match, search
+from lxml.etree import HTML
+from os import path as ospath
+from re import compile, findall, match, search, sub
+from requests import Session, post
+from requests.adapters import HTTPAdapter
 from time import sleep
 from urllib.parse import parse_qs, urlparse
+from urllib3.util.retry import Retry
 from uuid import uuid4
 
-from cloudscraper import create_scraper
-from lxml.etree import HTML
-from requests import Session, post, get
-from requests import session as req_session
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
 from bot import config_dict
-from bot.helper.ext_utils.bot_utils import is_share_link, text_size_to_bytes
 from bot.helper.ext_utils.exceptions import DirectDownloadLinkException
 from bot.helper.ext_utils.help_messages import PASSWORD_ERROR_MESSAGE
+from bot.helper.telegram_helper.bot_commands import BotCommands
+from bot.helper.ext_utils.links_utils import is_share_link
+from bot.helper.ext_utils.status_utils import speed_string_to_bytes, get_readable_time
+
 
 _caches = {}
 
+userAgent = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0"
+)
 
-def direct_link_generator(link):
-    """ direct links generator """
+
+def direct_link_generator(link: str):
+    """direct links generator"""
     domain = urlparse(link).hostname
     if not domain:
-        raise DirectDownloadLinkException("ERROR: Invalid URL")
-    if 'youtube.com' in domain or 'youtu.be' in domain:
-        raise DirectDownloadLinkException("ERROR: Use ytdl cmds for Youtube links")
-    elif "yadi.sk" in link or "disk.yandex." in link:
-        return yandex_disk(link)
-    elif 'mediafire.com' in domain:
+        raise DirectDownloadLinkException("ERROR: Link salah!")
+    if any(
+        x in domain
+        for x in [
+            "youtube.com",
+            "youtu.be",
+            "instagram.com",
+            "tiktok.com",
+            "facebook.com",
+        ]
+    ):
+        raise DirectDownloadLinkException(
+            f"ERROR: Gunakan perintah <b>YT-DLP</b> ({BotCommands.YtdlCommand[0]} atau {BotCommands.YtdlLeechCommand[0]}) untuk Unduh/Leech Link ini!"
+        )
+    elif any(x in domain for x in ["devuploads.com", "get.pixelexperience.org"]):
+        raise DirectDownloadLinkException(
+            f"ERROR: Gunakan perintah <b>JDownloader</b> ({BotCommands.JdMirrorCommand[0]} atau /{BotCommands.JdLeechCommand[0]}) untuk Unduh/Leech Link ini!"
+        )
+    elif any(x in domain for x in ["arrowos.net"]):
+        raise DirectDownloadLinkException(
+            "ERROR: Link ini tidak dapat Unduh/Leech menggunakan Bot!"
+        )
+    elif match(r"https?://(bigota|hugeota)\.d\.miui\.com/\S+", link):
+        return bigota(link)
+    elif "mediafire.com" in domain:
         return mediafire(link)
-    elif 'osdn.net' in domain:
+    elif "osdn.net" in domain:
         return osdn(link)
-    elif 'github.com' in domain:
+    elif "github.com" in domain:
         return github(link)
-    elif 'hxfile.co' in domain:
+    elif "hxfile.co" in domain:
         return hxfile(link)
-    elif '1drv.ms' in domain:
+    elif "1drv.ms" in domain:
         return onedrive(link)
-    elif 'pixeldrain.com' in domain:
+    elif "pixeldrain.com" in domain:
         return pixeldrain(link)
-    elif 'racaty' in domain:
+    elif "racaty" in domain:
         return racaty(link)
-    elif '1fichier.com' in domain:
-        return fichier(link)
-    elif 'solidfiles.com' in domain:
+    elif "1fichier.com" in domain:
+        if len(config_dict["ALLDEBRID_API"]) == 0:
+            return fichier(link)
+        else:
+            return alldebrid(link)
+    elif "solidfiles.com" in domain:
         return solidfiles(link)
-    elif 'krakenfiles.com' in domain:
+    elif "krakenfiles.com" in domain:
         return krakenfiles(link)
-    elif 'upload.ee' in domain:
+    elif "upload.ee" in domain:
         return uploadee(link)
-    elif 'gofile.io' in domain:
+    elif "gofile.io" in domain:
         return gofile(link)
-    elif 'send.cm' in domain:
-        return send_cm(link)
-    elif 'easyupload.io' in domain:
-        return easyupload(link)
-    elif 'streamvid.net' in domain:
-        return streamvid(link)
-    elif 'shrdsk.me' in domain:
-        return shrdsk(link)
-    elif 'tmpsend.com' in domain:
+    elif "send.cm" in domain:
+        if len(config_dict["ALLDEBRID_API"]) == 0:
+            return send_cm(link)
+        else:
+            return alldebrid(link)
+    elif "tmpsend.com" in domain:
         return tmpsend(link)
-    elif 'qiwi.gg' in domain:
+    elif "easyupload.io" in domain:
+        return easyupload(link)
+    elif "streamvid.net" in domain:
+        return streamvid(link)
+    elif "shrdsk.me" in domain:
+        return shrdsk(link)
+    elif "u.pcloud.link" in domain:
+        return pcloud(link)
+    elif any(x in domain for x in ["akmfiles.com", "akmfls.xyz"]):
+        return akmfiles(link)
+    elif any(
+        x in domain
+        for x in [
+            "dood.watch",
+            "doodstream.com",
+            "dood.to",
+            "dood.so",
+            "dood.cx",
+            "dood.la",
+            "dood.ws",
+            "dood.sh",
+            "doodstream.co",
+            "dood.pm",
+            "dood.wf",
+            "dood.re",
+            "dood.video",
+            "dooood.com",
+            "dood.yt",
+            "doods.yt",
+            "dood.stream",
+            "doods.pro",
+            "ds2play.com",
+            "d0o0d.com",
+            "ds2video.com",
+            "do0od.com",
+        ]
+    ):
+        return pake(link)
+    elif any(
+        x in domain
+        for x in [
+            "streamtape.com",
+            "streamtape.co",
+            "streamtape.cc",
+            "streamtape.to",
+            "streamtape.net",
+            "streamta.pe",
+            "streamtape.xyz",
+        ]
+    ):
+        return streamtape(link)
+    elif any(x in domain for x in ["wetransfer.com", "we.tl"]):
+        return wetransfer(link)
+    elif any(
+        x in domain
+        for x in [
+            "terabox.com",
+            "nephobox.com",
+            "4funbox.com",
+            "mirrobox.com",
+            "momerybox.com",
+            "teraboxapp.com",
+            "1024tera.com",
+            "terabox.app",
+            "gibibox.com",
+            "goaibox.com",
+        ]
+    ):
+        return terabox(link)
+    elif any(
+        x in domain
+        for x in [
+            "vidhide.com",
+            "vidhidepro.com",
+            "filelions.site",
+            "filelions.live",
+            "filelions.to",
+            "filelions.online",
+            "cabecabean.lol",
+            "embedwish.com",
+            "streamwish.com",
+            "kitabmarkaz.xyz",
+            "wishfast.top",
+            "streamwish.to",
+        ]
+    ):
+        return filelions_and_streamwish(link)
+    elif any(x in domain for x in ["streamhub.ink", "streamhub.to"]):
+        return streamhub(link)
+    elif any(
+        x in domain
+        for x in [
+            "linkbox.to",
+            "lbx.to",
+            "teltobx.net",
+            "telbx.net",
+        ]
+    ):
+        return linkBox(link)
+    elif any(x in domain for x in ["teltobx.net", "telbx.net"]):
+        return teltobx(link)
+    elif is_share_link(link):
+        if "gdtot" in domain:
+            return gdtot(link)
+        elif "filepress" in domain:
+            return filepress(link)
+        else:
+            return sharer_scraper(link)
+    elif any(
+        x in domain
+        for x in [
+            "anonfiles.com",
+            "zippyshare.com",
+            "letsupload.io",
+            "hotfile.io",
+            "bayfiles.com",
+            "megaupload.nz",
+            "letsupload.cc",
+            "filechan.org",
+            "myfile.is",
+            "vshare.is",
+            "rapidshare.nu",
+            "lolabits.se",
+            "openload.cc",
+            "share-online.is",
+            "upvid.cc",
+            "uptobox.com",
+            "uptobox.fr",
+        ]
+    ):
+        raise DirectDownloadLinkException(f"ERROR: R.I.P {domain}")
+    elif "androiddatahost.com" in domain:
+        return androiddatahost(link)
+    elif "apkadmin.com" in domain or "sharemods.com" in domain:
+        return apkadmin(link)
+    elif "sourceforge" in domain:
+        return sourceforge(link)
+    elif "androidfilehost.com" in link:
+        return androidfilehost(link)
+    elif "tusfiles.net" in domain or "tusfiles.com" in domain:
+        return tusfiles(link)
+    elif "pandafiles.com" in domain:
+        return pandafiles(link)
+    elif "uploadhaven.com" in domain:
+        return uploadhaven(link)
+    elif "uploadrar.com" in domain:
+        return uploadrar(link)
+    elif "romsget.io" in domain:
+        return link if domain == "static.romsget.io" else romsget(link)
+    elif "hexupload.net" in domain:
+        return hexupload(link)
+    elif "disk.yandex" in domain or "yadi.sk" in domain:
+        return yandex_disk(link)
+    elif "sfile.mobi" in domain:
+        return sfile(link)
+    elif "qiwi.gg" in domain:
         return qiwi(link)
     elif "mp4upload.com" in domain:
         return mp4upload(link)
     elif "berkasdrive.com" in domain:
         return berkasdrive(link)
-    elif any(x in domain for x in ['e.pcloud.link', 'u.pcloud.link']):
-        return pcloud(link)
-    elif any(x in domain for x in ['akmfiles.com', 'akmfls.xyz']):
-        return akmfiles(link)
-    elif any(x in domain for x in ['dood.watch', 'doodstream.com', 'dood.to', 'dood.so', 'dood.cx',
-                                   'dood.la', 'dood.ws', 'dood.sh', 'doodstream.co', 'dood.pm',
-                                   'dood.wf', 'dood.re', 'dood.video', 'dooood.com', 'dood.yt',
-                                   'doods.yt', 'dood.stream', 'doods.pro', 'd0o0d.com', 'ds2video.com', 
-                                   'do0od.com', 'ds2play.com']):
-        return doods(link)
-    elif any(x in domain for x in ['streamtape.com', 'streamtape.co', 'streamtape.cc', 'streamtape.to', 'streamtape.net',
-                                   'streamta.pe', 'streamtape.xyz']):
-        return streamtape(link)
-    elif any(x in domain for x in ['wetransfer.com', 'we.tl']):
-        return wetransfer(link)
-    elif any(x in domain for x in ['terabox.com', 'nephobox.com', '4funbox.com', 'mirrobox.com', 'momerybox.com',
-                                   'teraboxapp.com', '1024tera.com', 'terabox.app', 'gibibox.com', 'goaibox.com']):
-        return terabox(link)
-    elif any(x in domain for x in ['cabecabean.lol', 'embedwish.com', 'filelions.co', 'filelions.live',
-                                   'filelions.to', 'filelions.online', 'filelions.site', 'kitabmarkaz.xyz',
-                                   'streamwish.com', 'streamwish.to', 'wishfast.top']):
-        return filelions_and_streamwish(link)
-    elif any(x in domain for x in ['streamhub.ink', 'streamhub.to']):
-        return streamhub(link)
-    elif any(x in domain for x in ['linkbox.to', 'lbx.to']):
-        return linkBox(link)
-    elif is_share_link(link):
-        if 'gdtot' in domain:
-            return gdtot(link)
-        elif 'filepress' in domain:
-            return filepress(link)
-        elif 'jiodrive' in domain:
-            return jiodrive(link)
-        else:
-            return sharer_scraper(link)
-    elif any(x in domain for x in  ['anonfiles.com', 'zippyshare.com', 'letsupload.io', 'hotfile.io', 'bayfiles.com',
-                                    'megaupload.nz', 'letsupload.cc', 'filechan.org', 'myfile.is', 'vshare.is',
-                                    'rapidshare.nu', 'lolabits.se', 'openload.cc', 'share-online.is', 'upvid.cc',
-                                    'uptobox.com', 'uptobox.fr', 'sbembed.com', 'streamsb.net', 'sbplay.org', 'watchsb.com'
-                                    'fembed.net', 'fembed.com', 'femax20.com', 'fcdn.stream', 'feurl.com', 'mm9842.com',
-                                    'layarkacaxxi.icu', 'naniplay.nanime.in', 'naniplay.nanime.biz', 'naniplay.com']):
-        raise DirectDownloadLinkException(f'ERROR: R.I.P {domain}')
+    elif "sharepoint.com" in domain:
+        return sharepoint(link)
+    # Add AllDebrid supported link here
+    elif any(
+        x in domain
+        for x in [
+            "4shared.com",
+            "alfafile.net",
+            "alterupload.com",
+            "apkadmin.com",
+            "cjoint.net",
+            "clickndownload.org",
+            "clicknupload.co",
+            "clicknupload.vip",
+            "clipwatching.com",
+            "darkibox.com",
+            "ddl.to",
+            "desfichiers.com",
+            "dfichiers.com",
+            "dl4free.com",
+            "drop.download",
+            "dropapk.to",
+            "dropgalaxy.in",
+            "fastbit.cc",
+            "file-upload.com",
+            "file.al",
+            "filedot.to",
+            "filedot.xyz",
+            "filespace.com",
+            "flashbit.cc",
+            "gigapeta.com",
+            "gulf-up.com",
+            "harefile.com",
+            "hexupload.net",
+            "hitf.cc",
+            "hitf.to",
+            "hitfile.net",
+            "htfl.net",
+            "isra.cloud",
+            "load.to",
+            "megadl.fr",
+            "mesfichiers.org",
+            "mexa.sh",
+            "mexashare.com",
+            "modsbase.com",
+            "mp4upload.com",
+            "piecejointe.net",
+            "pjointe.com",
+            "playvidto.com",
+            "prefiles.com",
+            "rapidfileshare.net",
+            "rapidgator.net",
+            "rg.to",
+            "scribd.com",
+            "sendit.cloud",
+            "sharemods.com",
+            "simfileshare.net",
+            "tenvoi.com",
+            "trbbt.net",
+            "turb.cc",
+            "turb.pw",
+            "turbo.to",
+            "turbobif.com",
+            "turbobit.cc",
+            "turbobit.cloud",
+            "turbobit.net",
+            "up-4ever.net",
+            "up-load.io",
+            "upload-4ever.com",
+            "upload42.com",
+            "uploadboy.com",
+            "uploadev.com",
+            "uploadev.org",
+            "uploadrar.com",
+            "uploadydl.com",
+            "uppit.com",
+            "userscloud.com",
+            "userupload.net",
+            "vev.io",
+            "vidoza.net",
+            "vidoza.org",
+            "vidto-do.com",
+            "vidtodo.com",
+            "vipfile.cc",
+            "wayupload.com",
+            "world-files.com",
+            "worldbytez.com",
+        ]
+    ):
+        return alldebrid(link)
     else:
-        raise DirectDownloadLinkException(f'No Direct link function found for {link}')
+        raise DirectDownloadLinkException(
+            f"Tidak ada fungsi Generator Direct Link untuk {link}"
+        )
+
 
 def get_captcha_token(session, params):
-    recaptcha_api = 'https://www.google.com/recaptcha/api2'
-    res = session.get(f'{recaptcha_api}/anchor', params=params)
+    recaptcha_api = "https://www.google.com/recaptcha/api2"
+    res = session.get(f"{recaptcha_api}/anchor", params=params)
     anchor_html = HTML(res.text)
-    if not (anchor_token:= anchor_html.xpath('//input[@id="recaptcha-token"]/@value')):
+    if not (anchor_token := anchor_html.xpath('//input[@id="recaptcha-token"]/@value')):
         return
-    params['c'] = anchor_token[0]
-    params['reason'] = 'q'
-    res = session.post(f'{recaptcha_api}/reload', params=params)
+    params["c"] = anchor_token[0]
+    params["reason"] = "q"
+    res = session.post(f"{recaptcha_api}/reload", params=params)
     if token := findall(r'"rresp","(.*?)"', res.text):
         return token[0]
 
 
+def uptobox(url):
+    try:
+        urls = findall(r"\bhttps?://.*uptobox\.com\S+", url)[0]
+    except IndexError:
+        raise DirectDownloadLinkException("ERROR: Link Uptobox tidak ditemukan!")
+    if urls := findall(r"\bhttps?://.*\.uptobox\.com/dl\S+", url):
+        return urls[0]
+    if "::" in url:
+        _password = url.split("::")[-1]
+    else:
+        _password = None
+    with create_scraper() as session:
+        try:
+            file_id = findall(r"\bhttps?://.*uptobox\.com/(\w+)", url)[0]
+            if UPTOBOX_TOKEN := config_dict["UPTOBOX_TOKEN"]:
+                file_link = f"https://uptobox.com/api/link?token={UPTOBOX_TOKEN}&file_code={file_id}"
+            else:
+                file_link = f"https://uptobox.com/api/link?file_code={file_id}"
+            if _password:
+                file_link = file_link + f"&password={_password}"
+            res = session.get(file_link).json()
+        except Exception as e:
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        if res["statusCode"] == 0:
+            return res["data"]["dlLink"]
+        elif res["statusCode"] == 16:
+            sleep(1)
+            waiting_token = res["data"]["waitingToken"]
+            sleep(res["data"]["waiting"])
+        elif res["statusCode"] == 17:
+            raise DirectDownloadLinkException(
+                f"ERROR:\n{PASSWORD_ERROR_MESSAGE.format(url)}"
+            )
+        elif res["statusCode"] == 39:
+            raise DirectDownloadLinkException(
+                f"ERROR: Uptobox sedang limit! Silahkan tunggu {get_readable_time(res['data']['waiting'])} lagi!"
+            )
+        else:
+            raise DirectDownloadLinkException(f"ERROR: {res['message']}")
+        try:
+            res = session.get(f"{file_link}&waitingToken={waiting_token}").json()
+            return res["data"]["dlLink"]
+        except Exception as e:
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+
+
 def mediafire(url, session=None):
-    if '/folder/' in url:
+    if "/folder/" in url:
         return mediafireFolder(url)
-    if final_link := findall(r'https?:\/\/download\d+\.mediafire\.com\/\S+\/\S+\/\S+', url):
+    if final_link := findall(
+        r"https?:\/\/download\d+\.mediafire\.com\/\S+\/\S+\/\S+", url
+    ):
         return final_link[0]
     if session is None:
         session = Session()
         parsed_url = urlparse(url)
-        url = f'{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}'
+        url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
     try:
         html = HTML(session.get(url).text)
     except Exception as e:
         session.close()
-        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
-    if error:= html.xpath('//p[@class="notranslate"]/text()'):
+        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+    if error := html.xpath("//p[@class='notranslate']/text()"):
         session.close()
         raise DirectDownloadLinkException(f"ERROR: {error[0]}")
     if not (final_link := html.xpath("//a[@id='downloadButton']/@href")):
         session.close()
-        raise DirectDownloadLinkException("ERROR: No links found in this page Try Again")
-    if final_link[0].startswith('//'):
-        return mediafire(f'https://{final_link[0][2:]}', session)
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+    if final_link[0].startswith("//"):
+        return mediafire(f"https://{final_link[0][2:]}", session)
     session.close()
     return final_link[0]
 
 
-def yandex_disk(url: str) -> str:
-    """Yandex.Disk direct link generator
-    Based on https://github.com/wldhx/yadisk-direct"""
+def mediafireFolder(url):
     try:
-        link = findall(r"\b(https?://(yadi\.sk|disk\.yandex\.(com|ru))\S+)", url)[0][0]
-    except IndexError:
-        return "No Yandex.Disk links found\n"
-    api = "https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key={}"
+        raw = url.split("/", 4)[-1]
+        folderkey = raw.split("/", 1)[0]
+        folderkey = folderkey.split(",")
+    except:
+        raise DirectDownloadLinkException("ERROR: Link Folder tidak ditemukan!")
+    if len(folderkey) == 1:
+        folderkey = folderkey[0]
+    details = {"contents": [], "title": "", "total_size": 0, "header": ""}
+
+    session = Session()
+    adapter = HTTPAdapter(
+        max_retries=Retry(total=10, read=10, connect=10, backoff_factor=0.3)
+    )
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    session = create_scraper(
+        browser={"browser": "firefox", "platform": "windows", "mobile": False},
+        delay=10,
+        sess=session,
+    )
+    folder_infos = []
+
+    def __get_info(folderkey):
+        try:
+            if isinstance(folderkey, list):
+                folderkey = ",".join(folderkey)
+            _json = session.post(
+                "https://www.mediafire.com/api/1.5/folder/get_info.php",
+                data={
+                    "recursive": "yes",
+                    "folder_key": folderkey,
+                    "response_format": "json",
+                },
+            ).json()
+        except Exception as e:
+            raise DirectDownloadLinkException(
+                f"ERROR: {e.__class__.__name__} ketika mencoba mendapatkan Info Folder!"
+            ) from e
+        _res = _json["response"]
+        if "folder_infos" in _res:
+            folder_infos.extend(_res["folder_infos"])
+        elif "folder_info" in _res:
+            folder_infos.append(_res["folder_info"])
+        elif "message" in _res:
+            raise DirectDownloadLinkException(f"ERROR: {_res['message']}")
+        else:
+            raise DirectDownloadLinkException("ERROR: Info Folder tidak ditemukan!")
+
     try:
-        return get(api.format(link)).json()["href"]
-    except KeyError as e:
-        raise DirectDownloadLinkException(
-            "ERROR: File not found/Download limit reached"
-        ) from e
+        __get_info(folderkey)
+    except Exception as e:
+        raise DirectDownloadLinkException(e)
+
+    details["title"] = folder_infos[0]["name"]
+
+    def __scraper(url):
+        try:
+            html = HTML(session.get(url).text)
+        except:
+            return
+        if final_link := html.xpath("//a[@id='downloadButton']/@href"):
+            return final_link[0]
+
+    def __get_content(folderKey, folderPath="", content_type="folders"):
+        try:
+            params = {
+                "content_type": content_type,
+                "folder_key": folderKey,
+                "response_format": "json",
+            }
+            _json = session.get(
+                "https://www.mediafire.com/api/1.5/folder/get_content.php",
+                params=params,
+            ).json()
+        except Exception as e:
+            raise DirectDownloadLinkException(
+                f"ERROR: {e.__class__.__name__} ketika mencoba mendapatkan Info File!"
+            ) from e
+        _res = _json["response"]
+        if "message" in _res:
+            raise DirectDownloadLinkException(f"ERROR: {_res['message']}")
+        _folder_content = _res["folder_content"]
+        if content_type == "folders":
+            folders = _folder_content["folders"]
+            for folder in folders:
+                if folderPath:
+                    newFolderPath = ospath.join(folderPath, folder["name"])
+                else:
+                    newFolderPath = ospath.join(folder["name"])
+                __get_content(folder["folderkey"], newFolderPath)
+            __get_content(folderKey, folderPath, "files")
+        else:
+            files = _folder_content["files"]
+            for file in files:
+                item = {}
+                if not (_url := __scraper(file["links"]["normal_download"])):
+                    continue
+                item["filename"] = file["filename"]
+                if not folderPath:
+                    folderPath = details["title"]
+                item["path"] = ospath.join(folderPath)
+                item["url"] = _url
+                if "size" in file:
+                    size = file["size"]
+                    if isinstance(size, str) and size.isdigit():
+                        size = float(size)
+                    details["total_size"] += size
+                details["contents"].append(item)
+
+    try:
+        for folder in folder_infos:
+            __get_content(folder["folderkey"], folder["name"])
+    except Exception as e:
+        raise DirectDownloadLinkException(e)
+    finally:
+        session.close()
+    if len(details["contents"]) == 1:
+        return (details["contents"][0]["url"], details["header"])
+    return details
 
 
 def osdn(url):
@@ -177,27 +563,42 @@ def osdn(url):
         try:
             html = HTML(session.get(url).text)
         except Exception as e:
-            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
-        if not (direct_link:= html.xapth('//a[@class="mirror_link"]/@href')):
-            raise DirectDownloadLinkException("ERROR: Direct link not found")
-        return f'https://osdn.net{direct_link[0]}'
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        if not (direct_link := html.xapth("//a[@class='mirror_link']/@href")):
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+        return f"https://osdn.net{direct_link[0]}"
+
+
+# def yandex_disk(url: str) -> str:
+#     """Yandex.Disk direct link generator
+#     Based on https://github.com/wldhx/yadisk-direct"""
+#     try:
+#         link = findall(r"\b(https?://(yadi\.sk|disk\.yandex\.(com|ru))\S+)", url)[0][0]
+#     except IndexError:
+#         return "ERROR: Link File tidak ditemukan!"
+#     api = "https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key={}"
+#     try:
+#         return get(api.format(link)).json()["href"]
+#     except KeyError as e:
+#         raise DirectDownloadLinkException(
+#             "ERROR: Link File tidak ditemukan!"
+#         ) from e
 
 
 def github(url):
-    """ GitHub direct links generator """
     try:
-        findall(r'\bhttps?://.*github\.com.*releases\S+', url)[0]
+        findall(r"\bhttps?://.*github\.com.*releases\S+", url)[0]
     except IndexError:
-        raise DirectDownloadLinkException("No GitHub Releases links found")
+        raise DirectDownloadLinkException("Link Github Release tidak ditemukan!")
     with create_scraper() as session:
         _res = session.get(url, stream=True, allow_redirects=False)
-        if 'location' in _res.headers:
+        if "location" in _res.headers:
             return _res.headers["location"]
-        raise DirectDownloadLinkException("ERROR: Can't extract the link")
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
 
 
 def hxfile(url):
-    if not path.isfile("hxfile.txt"):
+    if not ospath.isfile("hxfile.txt"):
         raise DirectDownloadLinkException("ERROR: hxfile.txt (cookies) Not Found!")
     try:
         jar = MozillaCookieJar()
@@ -219,12 +620,10 @@ def hxfile(url):
             raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
     if direct_link := html.xpath("//a[@class='btn btn-dow']/@href"):
         return direct_link[0]
-    raise DirectDownloadLinkException("ERROR: Direct download link not found")
+    raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
 
 
 def onedrive(link):
-    """ Onedrive direct link generator
-    By https://github.com/junedkh """
     with create_scraper() as session:
         try:
             link = session.get(link).url
@@ -233,29 +632,32 @@ def onedrive(link):
         except Exception as e:
             raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
         if not link_data:
-            raise DirectDownloadLinkException("ERROR: Unable to find link_data")
-        folder_id = link_data.get('resid')
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+        folder_id = link_data.get("resid")
         if not folder_id:
-            raise DirectDownloadLinkException('ERROR: folder id not found')
+            raise DirectDownloadLinkException("ERROR: Link Folder tidak ditemukan!")
         folder_id = folder_id[0]
-        authkey = link_data.get('authkey')
+        authkey = link_data.get("authkey")
         if not authkey:
-            raise DirectDownloadLinkException('ERROR: authkey not found')
+            raise DirectDownloadLinkException("ERROR: AuthKey tidak ditemukan!")
         authkey = authkey[0]
         boundary = uuid4()
-        headers = {'content-type': f'multipart/form-data;boundary={boundary}'}
-        data = f'--{boundary}\r\nContent-Disposition: form-data;name=data\r\nPrefer: Migration=EnableRedirect;FailOnMigratedFiles\r\nX-HTTP-Method-Override: GET\r\nContent-Type: application/json\r\n\r\n--{boundary}--'
+        headers = {"content-type": f"multipart/form-data;boundary={boundary}"}
+        data = f"--{boundary}\r\nContent-Disposition: form-data;name=data\r\nPrefer: Migration=EnableRedirect;FailOnMigratedFiles\r\nX-HTTP-Method-Override: GET\r\nContent-Type: application/json\r\n\r\n--{boundary}--"
         try:
-            resp = session.get( f'https://api.onedrive.com/v1.0/drives/{folder_id.split("!", 1)[0]}/items/{folder_id}?$select=id,@content.downloadUrl&ump=1&authKey={authkey}', headers=headers, data=data).json()
+            resp = session.get(
+                f"https://api.onedrive.com/v1.0/drives/{folder_id.split('!', 1)[0]}/items/{folder_id}?$select=id,@content.downloadUrl&ump=1&authKey={authkey}",
+                headers=headers,
+                data=data,
+            ).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
     if "@content.downloadUrl" not in resp:
-        raise DirectDownloadLinkException('ERROR: Direct link not found')
-    return resp['@content.downloadUrl']
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+    return resp["@content.downloadUrl"]
 
 
 def pixeldrain(url):
-    """ Based on https://github.com/yash-dk/TorToolkit-Telegram """
     url = url.strip("/ ")
     file_id = url.split("/")[-1]
     if url.split("/")[-2] == "l":
@@ -268,13 +670,11 @@ def pixeldrain(url):
         try:
             resp = session.get(info_link).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
     if resp["success"]:
         return dl_link
     else:
-        raise DirectDownloadLinkException(
-            f"ERROR: Cant't download due {resp['message']}.")
-
+        raise DirectDownloadLinkException(f"ERROR: {resp['message']}!")
 
 
 def streamtape(url):
@@ -284,11 +684,11 @@ def streamtape(url):
         with Session() as session:
             html = HTML(session.get(url).text)
     except Exception as e:
-        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
     if not (script := html.xpath("//script[contains(text(),'ideoooolink')]/text()")):
-        raise DirectDownloadLinkException("ERROR: requeries script not found")
+        raise DirectDownloadLinkException("ERROR: Script tidak ditemukan!")
     if not (link := findall(r"(&expires\S+)'", script[0])):
-        raise DirectDownloadLinkException("ERROR: Download link not found")
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
     return f"https://streamtape.com/get_video?id={_id}{link[-1]}"
 
 
@@ -296,28 +696,21 @@ def racaty(url):
     with create_scraper() as session:
         try:
             url = session.get(url).url
-            json_data = {
-                'op': 'download2',
-                'id': url.split('/')[-1]
-            }
+            json_data = {"op": "download2", "id": url.split("/")[-1]}
             html = HTML(session.post(url, data=json_data).text)
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-    if (direct_link := html.xpath("//a[@id='uniqueExpirylink']/@href")):
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+    if direct_link := html.xpath("//a[@id='uniqueExpirylink']/@href"):
         return direct_link[0]
     else:
-        raise DirectDownloadLinkException('ERROR: Direct link not found')
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
 
 
 def fichier(link):
-    """ 1Fichier direct link generator
-    Based on https://github.com/Maujar
-    """
     regex = r"^([http:\/\/|https:\/\/]+)?.*1fichier\.com\/\?.+"
     gan = match(regex, link)
     if not gan:
-        raise DirectDownloadLinkException(
-            "ERROR: The link you entered is wrong!")
+        raise DirectDownloadLinkException("ERROR: Link 1Fichier tidak ditemukan!")
     if "::" in link:
         pswd = link.split("::")[-1]
         url = link.split("::")[-2]
@@ -327,58 +720,61 @@ def fichier(link):
     cget = create_scraper().request
     try:
         if pswd is None:
-            req = cget('post', url)
+            req = cget("post", url)
         else:
             pw = {"pass": pswd}
-            req = cget('post', url, data=pw)
+            req = cget("post", url, data=pw)
     except Exception as e:
-        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
     if req.status_code == 404:
-        raise DirectDownloadLinkException("ERROR: File not found/The link you entered is wrong!")
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
     html = HTML(req.text)
-    if dl_url:= html.xpath('//a[@class="ok btn-general btn-orange"]/@href'):
+    if dl_url := html.xpath("//a[@class='ok btn-general btn-orange']/@href"):
         return dl_url[0]
-    if not (ct_warn := html.xpath('//div[@class="ct_warn"]')):
-        raise DirectDownloadLinkException("ERROR: Error trying to generate Direct Link from 1fichier!")
+    if not (ct_warn := html.xpath("//div[@class='ct_warn']")):
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
     if len(ct_warn) == 3:
         str_2 = ct_warn[-1].text
         if "you must wait" in str_2.lower():
             if numbers := [int(word) for word in str_2.split() if word.isdigit()]:
-                raise DirectDownloadLinkException(f"ERROR: 1fichier is on a limit. Please wait {numbers[0]} minute.")
+                raise DirectDownloadLinkException(
+                    f"ERROR: 1Fichier sedang limit! Silahkan tunggu {numbers[0]} menit lagi!"
+                )
             else:
-                raise DirectDownloadLinkException("ERROR: 1fichier is on a limit. Please wait a few minutes/hour.")
+                raise DirectDownloadLinkException("ERROR: 1Fichier sedang limit!")
         elif "protect access" in str_2.lower():
-            raise DirectDownloadLinkException(f"ERROR:\n{PASSWORD_ERROR_MESSAGE.format(link)}")
+            raise DirectDownloadLinkException(
+                f"ERROR:\n{PASSWORD_ERROR_MESSAGE.format(link)}"
+            )
         else:
-            raise DirectDownloadLinkException("ERROR: Failed to generate Direct Link from 1fichier!")
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
     elif len(ct_warn) == 4:
         str_1 = ct_warn[-2].text
         str_3 = ct_warn[-1].text
         if "you must wait" in str_1.lower():
             if numbers := [int(word) for word in str_1.split() if word.isdigit()]:
-                raise DirectDownloadLinkException(f"ERROR: 1fichier is on a limit. Please wait {numbers[0]} minute.")
+                raise DirectDownloadLinkException(
+                    f"ERROR: 1Fichier sedang limit! Silahkan tunggu {numbers[0]} menit lagi!"
+                )
             else:
-                raise DirectDownloadLinkException("ERROR: 1fichier is on a limit. Please wait a few minutes/hour.")
+                raise DirectDownloadLinkException("ERROR: 1Fichier sedang limit!")
         elif "bad password" in str_3.lower():
-            raise DirectDownloadLinkException("ERROR: The password you entered is wrong!")
-    raise DirectDownloadLinkException("ERROR: Error trying to generate Direct Link from 1fichier!")
+            raise DirectDownloadLinkException("ERROR: Password salah!")
+        else:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
 
 
 def solidfiles(url):
-    """ Solidfiles direct link generator
-    Based on https://github.com/Xonshiz/SolidFiles-Downloader
-    By https://github.com/Jusidama18 """
     with create_scraper() as session:
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.125 Safari/537.36'
-            }
+            headers = {"User-Agent": userAgent}
             pageSource = session.get(url, headers=headers).text
             mainOptions = str(
-                search(r'viewerOptions\'\,\ (.*?)\)\;', pageSource).group(1))
+                search(r"viewerOptions\"\,\ (.*?)\)\;", pageSource).group(1)
+            )
             return loads(mainOptions)["downloadUrl"]
         except Exception as e:
-            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
 
 
 def krakenfiles(url):
@@ -386,23 +782,25 @@ def krakenfiles(url):
         try:
             _res = session.get(url)
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
         html = HTML(_res.text)
-        if post_url:= html.xpath('//form[@id="dl-form"]/@action'):
-            post_url = f'https:{post_url[0]}'
+        if post_url := html.xpath("//form[@id='dl-form']/@action"):
+            post_url = f"https:{post_url[0]}"
         else:
-            raise DirectDownloadLinkException('ERROR: Unable to find post link.')
-        if token:= html.xpath('//input[@id="dl-token"]/@value'):
-            data = {'token': token[0]}
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+        if token := html.xpath("//input[@id='dl-token']/@value"):
+            data = {"token": token[0]}
         else:
-            raise DirectDownloadLinkException('ERROR: Unable to find token for post.')
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
         try:
             _json = session.post(post_url, data=data).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__} While send post request')
-    if _json['status'] != 'ok':
-        raise DirectDownloadLinkException("ERROR: Unable to find download after post request")
-    return _json['url']
+            raise DirectDownloadLinkException(
+                f"ERROR: {e.__class__.__name__} ketika mencoba mendapatkan Info File!"
+            ) from e
+    if _json["status"] != "ok":
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+    return _json["url"]
 
 
 def uploadee(url):
@@ -410,97 +808,103 @@ def uploadee(url):
         try:
             html = HTML(session.get(url).text)
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
     if link := html.xpath("//a[@id='d_l']/@href"):
         return link[0]
     else:
-        raise DirectDownloadLinkException("ERROR: Direct Link not found")
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
 
 
 def terabox(url):
-    if not path.isfile('terabox.txt'):
-        raise DirectDownloadLinkException("ERROR: terabox.txt not found")
+    if not ospath.isfile("terabox.txt"):
+        raise DirectDownloadLinkException(
+            "ERROR: Cookies (terabox.txt) tidak ditemukan!"
+        )
     try:
-        jar = MozillaCookieJar('terabox.txt')
+        jar = MozillaCookieJar("terabox.txt")
         jar.load()
     except Exception as e:
-        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
     cookies = {}
     for cookie in jar:
         cookies[cookie.name] = cookie.value
-    details = {'contents':[], 'title': '', 'total_size': 0}
-    details["header"] = ' '.join(f'{key}: {value}' for key, value in cookies.items())
 
-    def __fetch_links(session, dir_='', folderPath=''):
-        params = {
-            'app_id': '250528',
-            'jsToken': jsToken,
-            'shorturl': shortUrl
-            }
+    details = {"contents": [], "title": "", "total_size": 0}
+    details["header"] = " ".join(f"{key}: {value}" for key, value in cookies.items())
+
+    def __fetch_links(session, dir_="", folderPath=""):
+        params = {"app_id": "250528", "jsToken": jsToken, "shorturl": shortUrl}
         if dir_:
-            params['dir'] = dir_
+            params["dir"] = dir_
         else:
-            params['root'] = '1'
+            params["root"] = "1"
         try:
-            _json = session.get("https://www.1024tera.com/share/list", params=params, cookies=cookies).json()
+            _json = session.get(
+                "https://www.1024tera.com/share/list",
+                params=params,
+                cookies=cookies,
+            ).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-        if _json['errno'] not in [0, '0']:
-            if 'errmsg' in _json:
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        if _json["errno"] not in [0, "0"]:
+            if "errmsg" in _json:
                 raise DirectDownloadLinkException(f"ERROR: {_json['errmsg']}")
             else:
-                raise DirectDownloadLinkException('ERROR: Something went wrong!')
+                raise DirectDownloadLinkException("ERROR: Terjadi kesalahan!")
 
         if "list" not in _json:
             return
         contents = _json["list"]
         for content in contents:
-            if content['isdir'] in ['1', 1]:
+            if content["isdir"] in ["1", 1]:
                 if not folderPath:
-                    if not details['title']:
-                        details['title'] = content['server_filename']
-                        newFolderPath = path.join(details['title'])
+                    if not details["title"]:
+                        details["title"] = content["server_filename"]
+                        newFolderPath = ospath.join(details["title"])
                     else:
-                        newFolderPath = path.join(details['title'], content['server_filename'])
+                        newFolderPath = ospath.join(
+                            details["title"], content["server_filename"]
+                        )
                 else:
-                    newFolderPath = path.join(folderPath, content['server_filename'])
-                __fetch_links(session, content['path'], newFolderPath)
+                    newFolderPath = ospath.join(folderPath, content["server_filename"])
+                __fetch_links(session, content["path"], newFolderPath)
             else:
                 if not folderPath:
-                    if not details['title']:
-                        details['title'] = content['server_filename']
-                    folderPath = details['title']
+                    if not details["title"]:
+                        details["title"] = content["server_filename"]
+                    folderPath = details["title"]
                 item = {
-                    'url': content['dlink'],
-                    'filename': content['server_filename'],
-                    'path' : path.join(folderPath),
+                    "url": content["dlink"],
+                    "filename": content["server_filename"],
+                    "path": ospath.join(folderPath),
                 }
-                if 'size' in content:
+                if "size" in content:
                     size = content["size"]
                     if isinstance(size, str) and size.isdigit():
                         size = float(size)
-                    details['total_size'] += size
-                details['contents'].append(item)
+                    details["total_size"] += size
+                details["contents"].append(item)
 
     with Session() as session:
         try:
             _res = session.get(url, cookies=cookies)
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-        if jsToken := findall(r'window\.jsToken.*%22(.*)%22', _res.text):
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        if jsToken := findall(r"window\.jsToken.*%22(.*)%22", _res.text):
             jsToken = jsToken[0]
         else:
-            raise DirectDownloadLinkException('ERROR: jsToken not found!.')
-        shortUrl = parse_qs(urlparse(_res.url).query).get('surl')
+            raise DirectDownloadLinkException("ERROR: jsToken tidak ditemukan!")
+        shortUrl = parse_qs(urlparse(_res.url).query).get("surl")
         if not shortUrl:
-            raise DirectDownloadLinkException("ERROR: Could not find surl")
+            raise DirectDownloadLinkException("ERROR: ShortUrl tidak ditemukan!")
         try:
             __fetch_links(session)
         except Exception as e:
-            raise DirectDownloadLinkException(e)
-    if len(details['contents']) == 1:
-        return details['contents'][0]['url']
+            raise DirectDownloadLinkException (f"ERROR: {e}")
+    if len(details["contents"]) == 1:
+        return details["contents"][0]["url"]
     return details
+
 
 def filepress(url):
     with create_scraper() as session:
@@ -508,112 +912,132 @@ def filepress(url):
             url = session.get(url).url
             raw = urlparse(url)
             json_data = {
-                'id': raw.path.split('/')[-1],
-                'method': 'publicDownlaod',
+                "id": raw.path.split("/")[-1],
+                "method": "publicDownlaod",
             }
-            api = f'{raw.scheme}://{raw.hostname}/api/file/downlaod/'
-            res2 = session.post(api, headers={'Referer': f'{raw.scheme}://{raw.hostname}'}, json=json_data).json()
+            api = f"{raw.scheme}://{raw.hostname}/api/file/downlaod/"
+            res2 = session.post(
+                api,
+                headers={"Referer": f"{raw.scheme}://{raw.hostname}"},
+                json=json_data,
+            ).json()
             json_data2 = {
-               'id':res2["data"],
-               'method': 'publicUserDownlaod',
+                "id": res2["data"],
+                "method": "publicUserDownlaod",
             }
-            api2 = 'https://new2.filepress.store/api/file/downlaod2/'
-            res = session.post(api2, headers={'Referer': f'{raw.scheme}://{raw.hostname}'}, json=json_data2).json()
+            api2 = "https://new2.filepress.store/api/file/downlaod2/"
+            res = session.post(
+                api2,
+                headers={"Referer": f"{raw.scheme}://{raw.hostname}"},
+                json=json_data2,
+            ).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-    if 'data' not in res:
-        raise DirectDownloadLinkException(f'ERROR: {res["statusText"]}')
-    return f'https://drive.google.com/uc?id={res["data"]}&export=download'
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+    if "data" not in res:
+        raise DirectDownloadLinkException(f"ERROR: {res['statusText']}")
+    return f"https://drive.google.com/uc?id={res['data']}&export=download"
 
 
 def gdtot(url):
     cget = create_scraper().request
     try:
-        res = cget('GET', f'https://gdtot.pro/file/{url.split("/")[-1]}')
+        res = cget("GET", f"https://gdbot.pro/file/{url.split('/')[-1]}")
     except Exception as e:
-        raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-    token_url = HTML(res.text).xpath("//a[contains(@class,'inline-flex items-center justify-center')]/@href")
+        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+    token_url = HTML(res.text).xpath(
+        "//a[contains(@class,'inline-flex items-center justify-center')]/@href"
+    )
     if not token_url:
         try:
-            url = cget('GET', url).url
+            url = cget("GET", url).url
             p_url = urlparse(url)
-            res = cget("GET", f"{p_url.scheme}://{p_url.hostname}/ddl/{url.split('/')[-1]}")
+            res = cget(
+                "GET", f"{p_url.scheme}://{p_url.hostname}/ddl/{url.split('/')[-1]}"
+            )
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-        if (drive_link := findall(r"myDl\('(.*?)'\)", res.text)) and "drive.google.com" in drive_link[0]:
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        if (
+            drive_link := findall(r"myDl\('(.*?)'\)", res.text)
+        ) and "drive.google.com" in drive_link[0]:
             return drive_link[0]
         else:
-            raise DirectDownloadLinkException('ERROR: Drive Link not found, Try in your broswer')
+            raise DirectDownloadLinkException("ERROR: Link Drive tidak ditemukan!")
     token_url = token_url[0]
     try:
-        token_page = cget('GET', token_url)
+        token_page = cget("GET", token_url)
     except Exception as e:
-        raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__} with {token_url}')
-    path = findall('\("(.*?)"\)', token_page.text)
+        raise DirectDownloadLinkException(
+            f"ERROR: {e.__class__.__name__} dengan {token_url}"
+        ) from e
+    path = findall("\('(.*?)'\)", token_page.text)
     if not path:
-        raise DirectDownloadLinkException('ERROR: Cannot bypass this')
+        raise DirectDownloadLinkException("ERROR: Tidak bisa membypass link!")
     path = path[0]
     raw = urlparse(token_url)
-    final_url = f'{raw.scheme}://{raw.hostname}{path}'
+    final_url = f"{raw.scheme}://{raw.hostname}{path}"
     return sharer_scraper(final_url)
 
 
 def sharer_scraper(url):
     cget = create_scraper().request
     try:
-        url = cget('GET', url).url
+        url = cget("GET", url).url
         raw = urlparse(url)
-        header = {"useragent": "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/534.10 (KHTML, like Gecko) Chrome/7.0.548.0 Safari/534.10"}
-        res = cget('GET', url, headers=header)
+        header = {"User-Agent": userAgent}
+        res = cget("GET", url, headers=header)
     except Exception as e:
-        raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-    key = findall('"key",\s+"(.*?)"', res.text)
+        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+    key = findall("'key',\s+'(.*?)'", res.text)
     if not key:
-        raise DirectDownloadLinkException("ERROR: Key not found!")
+        raise DirectDownloadLinkException("ERROR: Key tidak ditemukan!")
     key = key[0]
     if not HTML(res.text).xpath("//button[@id='drc']"):
-        raise DirectDownloadLinkException("ERROR: This link don't have direct download button")
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
     boundary = uuid4()
     headers = {
-        'Content-Type': f'multipart/form-data; boundary=----WebKitFormBoundary{boundary}',
-        'x-token': raw.hostname,
-        'useragent': 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/534.10 (KHTML, like Gecko) Chrome/7.0.548.0 Safari/534.10'
+        "Content-Type": f"multipart/form-data; boundary=----WebKitFormBoundary{boundary}",
+        "x-token": raw.hostname,
+        "User-Agent": userAgent,
     }
 
-    data = f'------WebKitFormBoundary{boundary}\r\nContent-Disposition: form-data; name="action"\r\n\r\ndirect\r\n' \
-        f'------WebKitFormBoundary{boundary}\r\nContent-Disposition: form-data; name="key"\r\n\r\n{key}\r\n' \
-        f'------WebKitFormBoundary{boundary}\r\nContent-Disposition: form-data; name="action_token"\r\n\r\n\r\n' \
-        f'------WebKitFormBoundary{boundary}--\r\n'
+    data = (
+        f"------WebKitFormBoundary{boundary}\r\nContent-Disposition: form-data; name='action'\r\n\r\ndirect\r\n"
+        f"------WebKitFormBoundary{boundary}\r\nContent-Disposition: form-data; name='key'\r\n\r\n{key}\r\n"
+        f"------WebKitFormBoundary{boundary}\r\nContent-Disposition: form-data; name='action_token'\r\n\r\n\r\n"
+        f"------WebKitFormBoundary{boundary}--\r\n"
+    )
     try:
         res = cget("POST", url, cookies=res.cookies, headers=headers, data=data).json()
     except Exception as e:
-        raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
+        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
     if "url" not in res:
-        raise DirectDownloadLinkException('ERROR: Drive Link not found, Try in your broswer')
+        raise DirectDownloadLinkException("ERROR: Link Drive tidak ditemukan!")
     if "drive.google.com" in res["url"]:
         return res["url"]
     try:
-        res = cget('GET', res["url"])
+        res = cget("GET", res["url"])
     except Exception as e:
-        raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-    if (drive_link := HTML(res.text).xpath("//a[contains(@class,'btn')]/@href")) and "drive.google.com" in drive_link[0]:
+        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+    if (
+        drive_link := HTML(res.text).xpath("//a[contains(@class,'btn')]/@href")
+    ) and "drive.google.com" in drive_link[0]:
         return drive_link[0]
     else:
-        raise DirectDownloadLinkException('ERROR: Drive Link not found, Try in your broswer')
+        raise DirectDownloadLinkException("ERROR: Link Drive tidak ditemukan!")
 
 
 def wetransfer(url):
     with create_scraper() as session:
         try:
             url = session.get(url).url
-            splited_url = url.split('/')
-            json_data = {
-                'security_hash': splited_url[-1],
-                'intent': 'entire_transfer'
-            }
-            res = session.post(f'https://wetransfer.com/api/v4/transfers/{splited_url[-2]}/download', json=json_data).json()
+            splited_url = url.split("/")
+            json_data = {"security_hash": splited_url[-1], "intent": "entire_transfer"}
+            res = session.post(
+                f"https://wetransfer.com/api/v4/transfers/{splited_url[-2]}/download",
+                json=json_data,
+            ).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
     if "direct_link" in res:
         return res["direct_link"]
     elif "message" in res:
@@ -621,126 +1045,218 @@ def wetransfer(url):
     elif "error" in res:
         raise DirectDownloadLinkException(f"ERROR: {res['error']}")
     else:
-        raise DirectDownloadLinkException("ERROR: cannot find direct link")
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
 
 
 def akmfiles(url):
     with create_scraper() as session:
         try:
-            html = HTML(session.post(url, data={'op': 'download2', 'id': url.split('/')[-1]}).text)
+            html = HTML(
+                session.post(
+                    url,
+                    data={"op": "download2", "id": url.split("/")[-1]},
+                ).text
+            )
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-    if (direct_link := html.xpath("//a[contains(@class,'btn btn-dow')]/@href")):
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+    if direct_link := html.xpath("//a[contains(@class,'btn btn-dow')]/@href"):
         return direct_link[0]
     else:
-        raise DirectDownloadLinkException('ERROR: Direct link not found')
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
 
 
 def shrdsk(url):
     with create_scraper() as session:
         try:
-            _json = session.get(f'https://us-central1-affiliate2apk.cloudfunctions.net/get_data?shortid={url.split("/")[-1]}').json()
+            _json = session.get(
+                f"https://us-central1-affiliate2apk.cloudfunctions.net/get_data?shortid={url.split('/')[-1]}",
+            ).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-        if 'download_data' not in _json:
-            raise DirectDownloadLinkException('ERROR: Download data not found')
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        if "download_data" not in _json:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
         try:
-            _res = session.get(f"https://shrdsk.me/download/{_json['download_data']}", allow_redirects=False)
-            if 'Location' in _res.headers:
-                return _res.headers['Location']
+            _res = session.get(
+                f"https://shrdsk.me/download/{_json['download_data']}",
+                allow_redirects=False,
+            )
+            if "Location" in _res.headers:
+                return _res.headers["Location"]
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-    raise DirectDownloadLinkException("ERROR: cannot find direct link in headers")
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+    raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
 
 
-def linkBox(url:str):
+def linkBox(url: str):
     parsed_url = urlparse(url)
     try:
-        shareToken = parsed_url.path.split('/')[-1]
+        shareToken = parsed_url.path.split("/")[-1]
     except:
-        raise DirectDownloadLinkException('ERROR: invalid URL')
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
 
-    details = {'contents':[], 'title': '', 'total_size': 0}
+    details = {"contents": [], "title": "", "total_size": 0}
 
     def __singleItem(session, itemId):
         try:
-            _json = session.get('https://www.linkbox.to/api/file/detail', params={'itemId': itemId}).json()
+            _json = session.get(
+                "https://www.linkbox.to/api/file/detail",
+                params={"itemId": itemId},
+            ).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-        data = _json['data']
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        data = _json["data"]
         if not data:
-            if 'msg' in _json:
+            if "msg" in _json:
                 raise DirectDownloadLinkException(f"ERROR: {_json['msg']}")
-            raise DirectDownloadLinkException("ERROR: data not found")
-        itemInfo = data['itemInfo']
+            raise DirectDownloadLinkException("ERROR: Data tidak ditemukan!")
+        itemInfo = data["itemInfo"]
         if not itemInfo:
-            raise DirectDownloadLinkException("ERROR: itemInfo not found")
+            raise DirectDownloadLinkException("ERROR: Item Info tidak ditemukan!")
         filename = itemInfo["name"]
-        sub_type = itemInfo.get('sub_type')
+        sub_type = itemInfo.get("sub_type")
         if sub_type and not filename.endswith(sub_type):
-            filename += f'.{sub_type}'
-        if not details['title']:
-            details['title'] = filename
+            filename += f".{sub_type}"
+        if not details["title"]:
+            details["title"] = filename
         item = {
-            "path": '',
+            "path": "",
             "filename": filename,
             "url": itemInfo["url"],
         }
-        if 'size' in itemInfo:
+        if "size" in itemInfo:
             size = itemInfo["size"]
             if isinstance(size, str) and size.isdigit():
                 size = float(size)
-            details['total_size'] += size
-        details['contents'].append(item)
-        
-    def __fetch_links(session, _id=0, folderPath=''):
+            details["total_size"] += size
+        details["contents"].append(item)
+
+    def __fetch_links(session, _id=0, folderPath=""):
         params = {
-            'shareToken': shareToken,
-            'pageSize': 1000,
-            'pid': _id,
+            "shareToken": shareToken,
+            "pageSize": 1000,
+            "pid": _id,
         }
         try:
-            _json = session.get('https://www.linkbox.to/api/file/share_out_list', params=params).json()
+            _json = session.get(
+                "https://www.linkbox.to/api/file/share_out_list",
+                params=params,
+            ).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-        data = _json['data']
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        data = _json["data"]
         if not data:
-            if 'msg' in _json:
+            if "msg" in _json:
                 raise DirectDownloadLinkException(f"ERROR: {_json['msg']}")
-            raise DirectDownloadLinkException("ERROR: data not found")
-        if data['shareType'] == 'singleItem':
-            return __singleItem(session, data['itemId'])
-        if not details['title']:
-            details['title'] = data['dirName']
-        contents = data['list']
+            raise DirectDownloadLinkException("ERROR: Data tidak ditemukan!")
+        try:
+            if data["shareType"] == "singleItem":
+                return __singleItem(session, data["itemId"])
+        except:
+            pass
+        if not details["title"]:
+            details["title"] = data["dirName"]
+        contents = data["list"]
         if not contents:
             return
         for content in contents:
-            if content['type'] == 'dir' and 'url' not in content:
+            if content["type"] == "dir" and "url" not in content:
                 if not folderPath:
-                    newFolderPath = path.join(details['title'], content["name"])
+                    newFolderPath = ospath.join(details["title"], content["name"])
                 else:
-                    newFolderPath = path.join(folderPath, content["name"])
-                if not details['title']:
-                    details['title'] = content['name']
+                    newFolderPath = ospath.join(folderPath, content["name"])
+                if not details["title"]:
+                    details["title"] = content["name"]
                 __fetch_links(session, content["id"], newFolderPath)
-            elif 'url' in content:
+            elif "url" in content:
                 if not folderPath:
-                    folderPath = details['title']
+                    folderPath = details["title"]
                 filename = content["name"]
-                if (sub_type := content.get('sub_type')) and not filename.endswith(sub_type):
-                    filename += f'.{sub_type}'
+                if (sub_type := content.get("sub_type")) and not filename.endswith(
+                    sub_type
+                ):
+                    filename += f".{sub_type}"
                 item = {
-                    "path": path.join(folderPath),
+                    "path": ospath.join(folderPath),
                     "filename": filename,
                     "url": content["url"],
                 }
-                if 'size' in content:
+                if "size" in content:
                     size = content["size"]
                     if isinstance(size, str) and size.isdigit():
                         size = float(size)
-                    details['total_size'] += size
-                details['contents'].append(item)
+                    details["total_size"] += size
+                details["contents"].append(item)
+
+    try:
+        with Session() as session:
+            __fetch_links(session)
+    except DirectDownloadLinkException as e:
+        raise e
+    return details
+
+
+def teltobx(url: str):
+    parsed_url = urlparse(url)
+    try:
+        shareToken = parsed_url.path.split("/")[-1]
+    except:
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+    details = {"contents": [], "title": "", "total_size": 0}
+
+    def __fetch_links(session, _id=0, folderPath=""):
+        nonlocal details
+        params = {
+            "shareToken": shareToken,
+            "pageSize": 1000,
+            "pid": _id,
+        }
+        try:
+            _json = session.get(
+                "https://www.linkbox.to/api/file/share_out_list",
+                params=params,
+            ).json()
+        except Exception as e:
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+        data = _json["data"]
+        if not data:
+            if "msg" in _json:
+                raise DirectDownloadLinkException(f"ERROR: {_json['msg']}")
+            raise DirectDownloadLinkException("ERROR: Data tidak ditemukan!")
+        if not details["title"]:
+            details["title"] = data["dirName"]
+        contents = data["list"]
+        if not contents:
+            return
+        for content in contents:
+            if content["type"] == "dir" and "url" not in content:
+                if not folderPath:
+                    newFolderPath = ospath.join(details["title"], content["name"])
+                else:
+                    newFolderPath = ospath.join(folderPath, content["name"])
+                if not details["title"]:
+                    details["title"] = content["name"]
+                __fetch_links(session, content["id"], newFolderPath)
+            elif "url" in content:
+                if not folderPath:
+                    folderPath = details["title"]
+                filename = content["name"]
+                if (sub_type := content.get("sub_type")) and not filename.endswith(
+                    sub_type
+                ):
+                    filename += f".{sub_type}"
+                item = {
+                    "path": ospath.join(folderPath),
+                    "filename": filename,
+                    "url": content["url"],
+                }
+                if "size" in content:
+                    size = content["size"]
+                    if isinstance(size, str) and size.isdigit():
+                        size = float(size)
+                    details["total_size"] += size
+                details["contents"].append(item)
+
     try:
         with Session() as session:
             __fetch_links(session)
@@ -814,15 +1330,15 @@ def gofile(url):
                 if not content["public"]:
                     continue
                 if not folderPath:
-                    newFolderPath = path.join(details['title'], content["name"])
+                    newFolderPath = ospath.join(details["title"], content["name"])
                 else:
-                    newFolderPath = path.join(folderPath, content["name"])
+                    newFolderPath = ospath.join(folderPath, content["name"])
                 __fetch_links(content["id"], newFolderPath)
             else:
                 if not folderPath:
                     folderPath = details["title"]
                 item = {
-                    "path": path.join(folderPath),
+                    "path": ospath.join(folderPath),
                     "filename": content["name"],
                     "url": content["link"],
                 }
@@ -849,138 +1365,30 @@ def gofile(url):
         return (details["contents"][0]["url"], details["header"])
     return details
 
-def mediafireFolder(url):
-    try:
-        raw = url.split('/', 4)[-1]
-        folderkey = raw.split('/', 1)[0]
-        folderkey = folderkey.split(',')
-    except:
-        raise DirectDownloadLinkException('ERROR: Could not parse ')
-    if len(folderkey) == 1:
-        folderkey = folderkey[0]
-    details = {'contents': [], 'title': '', 'total_size': 0, 'header': ''}
-
-    session = req_session()
-    adapter = HTTPAdapter(max_retries=Retry(
-        total=10, read=10, connect=10, backoff_factor=0.3))
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    session = create_scraper(
-        browser={"browser": "firefox", "platform": "windows", "mobile": False},
-        delay=10,
-        sess=session,
-    )
-    folder_infos = []
-
-    def __get_info(folderkey):
-        try:
-            if isinstance(folderkey, list):
-                folderkey = ','.join(folderkey)
-            _json = session.post('https://www.mediafire.com/api/1.5/folder/get_info.php', data={
-                'recursive': 'yes',
-                'folder_key': folderkey,
-                'response_format': 'json'
-            }).json()
-        except Exception as e:
-            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__} While getting info")
-        _res = _json['response']
-        if 'folder_infos' in _res:
-            folder_infos.extend(_res['folder_infos'])
-        elif 'folder_info' in _res:
-            folder_infos.append(_res['folder_info'])
-        elif 'message' in _res:
-            raise DirectDownloadLinkException(f"ERROR: {_res['message']}")
-        else:
-            raise DirectDownloadLinkException("ERROR: something went wrong!")
-
-
-    try:
-        __get_info(folderkey)
-    except Exception as e:
-        raise DirectDownloadLinkException(e)
-
-    details['title'] = folder_infos[0]["name"]
-
-    def __scraper(url):
-        try:
-            html = HTML(session.get(url).text)
-        except:
-            return
-        if final_link := html.xpath("//a[@id='downloadButton']/@href"):
-            return final_link[0]
-
-    def __get_content(folderKey, folderPath='', content_type='folders'):
-        try:
-            params = {
-                'content_type': content_type,
-                'folder_key': folderKey,
-                'response_format': 'json',
-            }
-            _json = session.get('https://www.mediafire.com/api/1.5/folder/get_content.php', params=params).json()
-        except Exception as e:
-            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__} While getting content")
-        _res = _json['response']
-        if 'message' in _res:
-            raise DirectDownloadLinkException(f"ERROR: {_res['message']}")
-        _folder_content = _res['folder_content']
-        if content_type == 'folders':
-            folders = _folder_content['folders']
-            for folder in folders:
-                if folderPath:
-                    newFolderPath = path.join(folderPath, folder["name"])
-                else:
-                    newFolderPath = path.join(folder["name"])
-                __get_content(folder['folderkey'], newFolderPath)
-            __get_content(folderKey, folderPath, 'files')
-        else:
-            files = _folder_content['files']
-            for file in files:
-                item = {}
-                if not (_url := __scraper(file['links']['normal_download'])):
-                    continue
-                item['filename'] = file["filename"]
-                if not folderPath:
-                    folderPath = details['title']
-                item['path'] = path.join(folderPath)
-                item['url'] = _url
-                if 'size' in file:
-                    size = file["size"]
-                    if isinstance(size, str) and size.isdigit():
-                        size = float(size)
-                    details['total_size'] += size
-                details['contents'].append(item)
-    try:
-        for folder in folder_infos:
-            __get_content(folder['folderkey'], folder['name'])
-    except Exception as e:
-        raise DirectDownloadLinkException(e)
-    finally:
-        session.close()
-    if len(details['contents']) == 1:
-        return (details['contents'][0]['url'], details['header'])
-    return details
 
 def cf_bypass(url):
     "DO NOT ABUSE THIS"
     try:
-        data = {
-            "cmd": "request.get",
-            "url": url,
-            "maxTimeout": 60000
-        }
-        _json = post("https://cf.jmdkh.eu.org/v1", headers={"Content-Type": "application/json"}, json=data).json()
-        if _json['status'] == 'ok':
-            return _json['solution']["response"]
+        data = {"cmd": "request.get", "url": url, "maxTimeout": 60000}
+        _json = post(
+            "https://cf.jmdkh.eu.org/v1",
+            headers={"Content-Type": "application/json"},
+            json=data,
+        ).json()
+        if _json["status"] == "ok":
+            return _json["solution"]["response"]
     except Exception as e:
-        e
-    raise DirectDownloadLinkException("ERROR: Con't bypass cloudflare")
+        raise DirectDownloadLinkException(
+            f"ERROR: Tidak bisa bypass CloudFlare! -> {e}"
+        )
+
 
 def send_cm_file(url, file_id=None):
     if "::" in url:
         _password = url.split("::")[-1]
         url = url.split("::")[-2]
     else:
-        _password = ''
+        _password = ""
     _passwordNeed = False
     with create_scraper() as session:
         if file_id is None:
@@ -988,81 +1396,103 @@ def send_cm_file(url, file_id=None):
                 html = HTML(session.get(url).text)
             except Exception as e:
                 raise DirectDownloadLinkException(
-                    f'ERROR: {e.__class__.__name__}')
+                    f"ERROR: {e.__class__.__name__}"
+                ) from e
             if html.xpath("//input[@name='password']"):
                 _passwordNeed = True
             if not (file_id := html.xpath("//input[@name='id']/@value")):
-                raise DirectDownloadLinkException('ERROR: file_id not found')
+                raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
         try:
-            data = {'op': 'download2', 'id': file_id}
+            data = {"op": "download2", "id": file_id}
             if _password and _passwordNeed:
                 data["password"] = _password
-            _res = session.post('https://send.cm/', data=data, allow_redirects=False)
-            if 'Location' in _res.headers:
-                return (_res.headers['Location'], 'Referer: https://send.cm/')
+            _res = session.post("https://send.cm/", data=data, allow_redirects=False)
+            if "Location" in _res.headers:
+                return (_res.headers["Location"], "Referer: https://send.cm/")
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-        if _passwordNeed:
-            raise DirectDownloadLinkException(f"ERROR:\n{PASSWORD_ERROR_MESSAGE.format(url)}")
-        raise DirectDownloadLinkException("ERROR: Direct link not found")
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+    if _passwordNeed:
+        raise DirectDownloadLinkException(
+            f"ERROR:\n{PASSWORD_ERROR_MESSAGE.format(url)}"
+        )
+    raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
 
 def send_cm(url):
-    if '/d/' in url:
+    if "/d/" in url:
         return send_cm_file(url)
-    elif '/s/' not in url:
+    elif "/s/" not in url:
         file_id = url.split("/")[-1]
         return send_cm_file(url, file_id)
     splitted_url = url.split("/")
-    details = {'contents': [], 'title': '', 'total_size': 0,
-               'header': 'Referer: https://send.cm/'}
+    details = {
+        "contents": [],
+        "title": "",
+        "total_size": 0,
+        "header": "Referer: https://send.cm/",
+    }
     if len(splitted_url) == 5:
-        url += '/'
+        url += "/"
         splitted_url = url.split("/")
     if len(splitted_url) >= 7:
-        details['title'] = splitted_url[5]
+        details["title"] = splitted_url[5]
     else:
-        details['title'] = splitted_url[-1]
+        details["title"] = splitted_url[-1]
     session = Session()
 
     def __collectFolders(html):
         folders = []
-        folders_urls = html.xpath('//h6/a/@href')
-        folders_names = html.xpath('//h6/a/text()')
+        folders_urls = html.xpath("//h6/a/@href")
+        folders_names = html.xpath("//h6/a/text()")
         for folders_url, folders_name in zip(folders_urls, folders_names):
-            folders.append({'folder_link':folders_url.strip(),'folder_name':folders_name.strip()})
+            folders.append(
+                {
+                    "folder_link": folders_url.strip(),
+                    "folder_name": folders_name.strip(),
+                }
+            )
         return folders
 
     def __getFile_link(file_id):
         try:
             _res = session.post(
-                'https://send.cm/', data={'op': 'download2', 'id': file_id}, allow_redirects=False)
-            if 'Location' in _res.headers:
-                return _res.headers['Location']
+                "https://send.cm/",
+                data={"op": "download2", "id": file_id},
+                allow_redirects=False,
+            )
+            if "Location" in _res.headers:
+                return _res.headers["Location"]
         except:
             pass
 
     def __getFiles(html):
         files = []
-        hrefs = html.xpath('//tr[@class="selectable"]//a/@href')
-        file_names = html.xpath('//tr[@class="selectable"]//a/text()')
-        sizes = html.xpath('//tr[@class="selectable"]//span/text()')
+        hrefs = html.xpath("//tr[@class='selectable']//a/@href")
+        file_names = html.xpath("//tr[@class='selectable']//a/text()")
+        sizes = html.xpath("//tr[@class='selectable']//span/text()")
         for href, file_name, size_text in zip(hrefs, file_names, sizes):
-            files.append({'file_id':href.split('/')[-1], 'file_name':file_name.strip(), 'size':text_size_to_bytes(size_text.strip())})
+            files.append(
+                {
+                    "file_id": href.split("/")[-1],
+                    "file_name": file_name.strip(),
+                    "size": speed_string_to_bytes(size_text.strip()),
+                }
+            )
         return files
 
-    def __writeContents(html_text, folderPath=''):
+    def __writeContents(html_text, folderPath=""):
         folders = __collectFolders(html_text)
         for folder in folders:
-            _html = HTML(cf_bypass(folder['folder_link']))
-            __writeContents(_html, path.join(folderPath, folder['folder_name']))
+            _html = HTML(cf_bypass(folder["folder_link"]))
+            __writeContents(_html, ospath.join(folderPath, folder["folder_name"]))
         files = __getFiles(html_text)
         for file in files:
-            if not (link := __getFile_link(file['file_id'])):
+            if not (link := __getFile_link(file["file_id"])):
                 continue
-            item = {'url': link,
-                    'filename': file['filename'], 'path': folderPath}
-            details['total_size'] += file['size']
-            details['contents'].append(item)
+            item = {"url": link, "filename": file["filename"], "path": folderPath}
+            details["total_size"] += file["size"]
+            details["contents"].append(item)
+
     try:
         mainHtml = HTML(cf_bypass(url))
     except DirectDownloadLinkException as e:
@@ -1070,21 +1500,40 @@ def send_cm(url):
         raise e
     except Exception as e:
         session.close()
-        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__} While getting mainHtml")
+        raise DirectDownloadLinkException(
+            f"ERROR: {e.__class__.__name__} ketika mencoba mendapatkan Link!"
+        ) from e
     try:
-        __writeContents(mainHtml, details['title'])
+        __writeContents(mainHtml, details["title"])
     except DirectDownloadLinkException as e:
         session.close()
         raise e
     except Exception as e:
         session.close()
-        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__} While writing Contents")
+        raise DirectDownloadLinkException(
+            f"ERROR: {e.__class__.__name__} ketika mencoba mendapatkan Konten!"
+        ) from e
     session.close()
-    if len(details['contents']) == 1:
-        return (details['contents'][0]['url'], details['header'])
+    if len(details["contents"]) == 1:
+        return (details["contents"][0]["url"], details["header"])
     return details
 
-def doods(url):
+
+def tmpsend(url):
+    parsed_url = urlparse(url)
+    if any(x in parsed_url.path for x in ["thank-you", "download"]):
+        query_params = parse_qs(parsed_url.query)
+        if file_id := query_params.get("d"):
+            file_id = file_id[0]
+    elif not (file_id := parsed_url.path.strip("/")):
+        raise DirectDownloadLinkException("ERROR: Direct Link tidak ditemukan!")
+    referer_url = f"https://tmpsend.com/thank-you?d={file_id}"
+    header = f"Referer: {referer_url}"
+    download_link = f"https://tmpsend.com/download?d={file_id}"
+    return download_link, header
+
+
+def doods(url: str):
     if "/e/" in url:
         url = url.replace("/e/", "/d/")
     parsed_url = urlparse(url)
@@ -1092,276 +1541,779 @@ def doods(url):
         try:
             html = HTML(session.get(url).text)
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__} While fetching token link')
+            raise DirectDownloadLinkException(
+                f"ERROR: {e.__class__.__name__} ketika mencoba mendapatkan Token Link!"
+            ) from e
         if not (link := html.xpath("//div[@class='download-content']//a/@href")):
-            raise DirectDownloadLinkException('ERROR: Token Link not found or maybe not allow to download! open in browser.')
-        link = f'{parsed_url.scheme}://{parsed_url.hostname}{link[0]}'
+            raise DirectDownloadLinkException("ERROR: Token tidak ditemukan!")
+        link = f"{parsed_url.scheme}://{parsed_url.hostname}{link[0]}"
         sleep(2)
         try:
             _res = session.get(link)
         except Exception as e:
             raise DirectDownloadLinkException(
-                f'ERROR: {e.__class__.__name__} While fetching download link')
+                f"ERROR: {e.__class__.__name__} ketika mencoba mendapatkan Link File!"
+            ) from e
     if not (link := search(r"window\.open\('(\S+)'", _res.text)):
-        raise DirectDownloadLinkException("ERROR: Download link not found try again")
-    return (link.group(1), f'Referer: {parsed_url.scheme}://{parsed_url.hostname}/')
+        raise DirectDownloadLinkException("ERROR: Direct Link tidak ditemukan!")
+    return (link.group(1), f"Referer: {parsed_url.scheme}://{parsed_url.hostname}/")
+
+
+def streamvid(url: str):
+    file_code = url.split("/")[-1]
+    parsed_url = urlparse(url)
+    url = f"{parsed_url.scheme}://{parsed_url.hostname}/d/{file_code}"
+    quality_defined = bool(url.endswith(("_o", "_h", "_n", "_l")))
+    with create_scraper() as session:
+        try:
+            html = HTML(session.get(url).text)
+        except Exception as e:
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        if quality_defined:
+            data = {}
+            if not (inputs := html.xpath("//form[@id='F1']//input")):
+                raise DirectDownloadLinkException("ERROR: Input tidak ditemukan!")
+            for i in inputs:
+                if key := i.get("name"):
+                    data[key] = i.get("value")
+            try:
+                html = HTML(session.post(url, data=data).text)
+            except Exception as e:
+                raise DirectDownloadLinkException(
+                    f"ERROR: {e.__class__.__name__}"
+                ) from e
+            if not (
+                script := html.xpath(
+                    "//script[contains(text(),'document.location.href')]/text()"
+                )
+            ):
+                if error := html.xpath(
+                    "//div[@class='alert alert-danger'][1]/text()[2]"
+                ):
+                    raise DirectDownloadLinkException(f"ERROR: {error[0]}")
+                raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+            if directLink := findall(r"document\.location\.href='(.*)'", script[0]):
+                return directLink[0]
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+        elif (qualities_urls := html.xpath("//div[@id='dl_versions']/a/@href")) and (
+            qualities := html.xpath("//div[@id='dl_versions']/a/text()[2]")
+        ):
+            error = "<b>Pilih kualitas Video :</b>\n<b>Kualitas yang tersedia :</b>"
+            for quality_url, quality in zip(qualities_urls, qualities):
+                error += f"\n{quality.strip()} <code>{quality_url}</code>"
+            raise DirectDownloadLinkException(f"{error}")
+        elif error := html.xpath("//div[@class='not-found-text']/text()"):
+            raise DirectDownloadLinkException(f"ERROR: {error[0]}")
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
 
 def easyupload(url):
     if "::" in url:
         _password = url.split("::")[-1]
         url = url.split("::")[-2]
     else:
-        _password = ''
+        _password = ""
     file_id = url.split("/")[-1]
     with create_scraper() as session:
         try:
             _res = session.get(url)
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
         first_page_html = HTML(_res.text)
-        if first_page_html.xpath("//h6[contains(text(),'Password Protected')]") and not _password:
-            raise DirectDownloadLinkException(f"ERROR:\n{PASSWORD_ERROR_MESSAGE.format(url)}")
-        if not (match := search(r'https://eu(?:[1-9][0-9]?|100)\.easyupload\.io/action\.php', _res.text)):
-            raise DirectDownloadLinkException("ERROR: Failed to get server for EasyUpload Link")
+        if (
+            first_page_html.xpath("//h6[contains(text(),'Password Protected')]")
+            and not _password
+        ):
+            raise DirectDownloadLinkException(
+                f"ERROR:\n{PASSWORD_ERROR_MESSAGE.format(url)}"
+            )
+        if not (
+            match := search(
+                r"https://eu(?:[1-9][0-9]?|100)\.easyupload\.io/action\.php", _res.text
+            )
+        ):
+            raise DirectDownloadLinkException("ERROR: Link EasyUpload tidak ditemukan!")
         action_url = match.group()
-        session.headers.update({'referer': 'https://easyupload.io/'})
+        session.headers.update({"referer": "https://easyupload.io/"})
         recaptcha_params = {
-            'k': '6LfWajMdAAAAAGLXz_nxz2tHnuqa-abQqC97DIZ3',
-            'ar': '1',
-            'co': 'aHR0cHM6Ly9lYXN5dXBsb2FkLmlvOjQ0Mw..',
-            'hl': 'en',
-            'v': '0hCdE87LyjzAkFO5Ff-v7Hj1',
-            'size': 'invisible',
-            'cb': 'c3o1vbaxbmwe'
+            "k": "6LfWajMdAAAAAGLXz_nxz2tHnuqa-abQqC97DIZ3",
+            "ar": "1",
+            "co": "aHR0cHM6Ly9lYXN5dXBsb2FkLmlvOjQ0Mw..",
+            "hl": "en",
+            "v": "0hCdE87LyjzAkFO5Ff-v7Hj1",
+            "size": "invisible",
+            "cb": "c3o1vbaxbmwe",
         }
-        if not (captcha_token :=get_captcha_token(session, recaptcha_params)):
-            raise DirectDownloadLinkException('ERROR: Captcha token not found')
+        if not (captcha_token := get_captcha_token(session, recaptcha_params)):
+            raise DirectDownloadLinkException("ERROR: Token Captcha tidak ditemukan!")
         try:
-            data = {'type': 'download-token',
-                    'url': file_id,
-                    'value': _password,
-                    'captchatoken': captcha_token,
-                    'method': 'regular'}
+            data = {
+                "type": "download-token",
+                "url": file_id,
+                "value": _password,
+                "captchatoken": captcha_token,
+                "method": "regular",
+            }
             json_resp = session.post(url=action_url, data=data).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-    if 'download_link' in json_resp:
-        return json_resp['download_link']
-    elif 'data' in json_resp:
-        raise DirectDownloadLinkException(
-            f"ERROR: Failed to generate direct link due to {json_resp['data']}")
-    raise DirectDownloadLinkException(
-        "ERROR: Failed to generate direct link from EasyUpload.")
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+    if "download_link" in json_resp:
+        return json_resp["download_link"]
+    elif "data" in json_resp:
+        raise DirectDownloadLinkException(f"ERROR: {json_resp['data']}")
+    raise DirectDownloadLinkException("ERROR: Direct Link tidak ditemukan!")
+
 
 def filelions_and_streamwish(url):
     parsed_url = urlparse(url)
     hostname = parsed_url.hostname
     scheme = parsed_url.scheme
-    if any(x in hostname
-           for x in ["filelions.co", "filelions.live", "filelions.to", "filelions.site", "cabecabean.lol", "filelions.online"]):
-        apiKey = config_dict['FILELION_API']
-        apiUrl = 'https://api.filelions.co'
-    elif any(x in hostname for x in ['embedwish.com', 'streamwish.com', 'streamwish.to', 'kitabmarkaz.xyz', 'wishfast.top']):
-        apiKey = config_dict['STREAMWISH_API']
-        apiUrl = 'https://api.streamwish.com'
+    if any(
+        x in hostname
+        for x in [
+            "vidhide.com",
+            "vidhidepro.com",
+            "filelions.live",
+            "filelions.to",
+            "filelions.site",
+            "filelions.online",
+            "cabecabean.lol",
+        ]
+    ):
+        apiKey = config_dict["FILELION_API"]
+        apiUrl = "https://vidhideapi.com"
+    elif any(
+        x in hostname
+        for x in [
+            "embedwish.com",
+            "streamwish.com",
+            "kitabmarkaz.xyz",
+            "wishfast.top",
+            "streamwish.to",
+        ]
+    ):
+        apiKey = config_dict["STREAMWISH_API"]
+        apiUrl = "https://api.streamwish.com"
     if not apiKey:
-        raise DirectDownloadLinkException(f'ERROR: API is not provided get it from {scheme}://{hostname}')
-    file_code = url.split('/')[-1]
-    quality = ''
-    if bool(file_code.endswith(('_o', '_h', '_n', '_l'))):
-        spited_file_code = file_code.rsplit('_', 1)
+        raise DirectDownloadLinkException(
+            f"ERROR: Api Key tidak ditemukan! Source :{scheme}://{hostname}"
+        )
+    file_code = url.split("/")[-1]
+    quality = ""
+    if bool(file_code.endswith(("_o", "_h", "_n", "_l"))):
+        spited_file_code = file_code.rsplit("_", 1)
         quality = spited_file_code[1]
         file_code = spited_file_code[0]
-    url = f'{scheme}://{hostname}/{file_code}'
+    url = f"{scheme}://{hostname}/{file_code}"
     with Session() as session:
         try:
-            _res = session.get(f'{apiUrl}/api/file/direct_link', params={'key': apiKey, 'file_code': file_code, 'hls': '1'}).json()
+            _res = session.get(
+                f"{apiUrl}/api/file/direct_link",
+                params={"key": apiKey, "file_code": file_code, "hls": "1"},
+            ).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-    if _res['status'] != 200:
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+    if _res["status"] != 200:
         raise DirectDownloadLinkException(f"ERROR: {_res['msg']}")
-    result = _res['result']
-    if not result['versions']:
-        raise DirectDownloadLinkException("ERROR: File Not Found")
-    error = '\nProvide a quality to download the video\nAvailable Quality:'
-    for version in result['versions']:
-        if quality == version['name']:
-            return version['url']
-        elif version['name'] == 'l':
-            error += f"\nLow"
-        elif version['name'] == 'n':
-            error += f"\nNormal"
-        elif version['name'] == 'o':
-            error += f"\nOriginal"
-        elif version['name'] == "h":
-            error += f"\nHD"
-        error +=f" <code>{url}_{version['name']}</code>"
-    raise DirectDownloadLinkException(f'ERROR: {error}')
+    result = _res["result"]
+    if not result["versions"]:
+        raise DirectDownloadLinkException("ERROR: Versi tidak ditemukan!")
+    error = "<b>Pilih kualitas Video :</b>\n<b>Kualitas yang tersedia :</b>"
+    for version in result["versions"]:
+        if quality == version["name"]:
+            return version["url"]
+        elif version["name"] == "l":
+            error += "\n<b>Low</b>"
+        elif version["name"] == "n":
+            error += "\n<b>Normal</b>"
+        elif version["name"] == "o":
+            error += "\n<b>Original</b>"
+        elif version["name"] == "h":
+            error += "\n<b>HD</b>"
+        error += f": <code>{url}_{version['name']}</code>"
+    raise DirectDownloadLinkException(f"{error}")
 
-def streamvid(url: str):
-    file_code = url.split('/')[-1]
-    parsed_url = urlparse(url)
-    url = f'{parsed_url.scheme}://{parsed_url.hostname}/d/{file_code}'
-    quality_defined = bool(url.endswith(('_o', '_h', '_n', '_l')))
-    with create_scraper() as session:
-        try:
-            html = HTML(session.get(url).text)
-        except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-        if quality_defined:
-            data = {}
-            if not (inputs := html.xpath('//form[@id="F1"]//input')):
-                raise DirectDownloadLinkException('ERROR: No inputs found')
-            for i in inputs:
-                if key := i.get('name'):
-                    data[key] = i.get('value')
-            try:
-                html = HTML(session.post(url, data=data).text)
-            except Exception as e:
-                raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-            if not (script := html.xpath('//script[contains(text(),"document.location.href")]/text()')):
-                if error := html.xpath('//div[@class="alert alert-danger"][1]/text()[2]'):
-                    raise DirectDownloadLinkException(f'ERROR: {error[0]}')
-                raise DirectDownloadLinkException("ERROR: direct link script not found!")
-            if directLink:=findall(r'document\.location\.href="(.*)"', script[0]):
-                return directLink[0]
-            raise DirectDownloadLinkException("ERROR: direct link not found! in the script")
-        elif (qualities_urls := html.xpath('//div[@id="dl_versions"]/a/@href')) and (qualities := html.xpath('//div[@id="dl_versions"]/a/text()[2]')):
-            error = '\nProvide a quality to download the video\nAvailable Quality:'
-            for quality_url, quality in zip(qualities_urls, qualities):
-                error += f"\n{quality.strip()} <code>{quality_url}</code>"
-            raise DirectDownloadLinkException(f'ERROR: {error}')
-        elif error:= html.xpath('//div[@class="not-found-text"]/text()'):
-            raise DirectDownloadLinkException(f'ERROR: {error[0]}')
-        raise DirectDownloadLinkException('ERROR: Something went wrong')
 
 def streamhub(url):
-    file_code = url.split('/')[-1]
+    file_code = url.split("/")[-1]
     parsed_url = urlparse(url)
-    url = f'{parsed_url.scheme}://{parsed_url.hostname}/d/{file_code}'
+    url = f"{parsed_url.scheme}://{parsed_url.hostname}/d/{file_code}"
     with create_scraper() as session:
         try:
             html = HTML(session.get(url).text)
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-        if not (inputs := html.xpath('//form[@name="F1"]//input')):
-            raise DirectDownloadLinkException('ERROR: No inputs found')
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        if not (inputs := html.xpath("//form[@name='F1']//input")):
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
         data = {}
         for i in inputs:
-            if key := i.get('name'):
-                data[key] = i.get('value')
-        session.headers.update({'referer': url})
+            if key := i.get("name"):
+                data[key] = i.get("value")
+        session.headers.update({"referer": url})
         sleep(1)
         try:
             html = HTML(session.post(url, data=data).text)
         except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}')
-        if directLink := html.xpath('//a[@class="btn btn-primary btn-go downloadbtn"]/@href'):
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        if directLink := html.xpath(
+            "//a[@class='btn btn-primary btn-go downloadbtn']/@href"
+        ):
             return directLink[0]
-        if error := html.xpath('//div[@class="alert alert-danger"]/text()[2]'):
+        if error := html.xpath("//div[@class='alert alert-danger']/text()[2]"):
             raise DirectDownloadLinkException(f"ERROR: {error[0]}")
-        raise DirectDownloadLinkException("ERROR: direct link not found!")
+        raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
 
-def jiodrive(url):
-    if not config_dict['JIODRIVE_ACCESS_TOKEN']:
-        raise DirectDownloadLinkException("ERROR: JIODRIVE_ACCESS_TOKEN is not provided")
-    with create_scraper() as session:
-        try:
-            url = session.get(url).url
-            cookies = {'access_token': config_dict['JIODRIVE_ACCESS_TOKEN']}
-            data = {'id': url.split("/")[-1]}
-            resp = session.post('https://www.jiodrive.xyz/ajax.php?ajax=download', cookies=cookies, data=data).json()
-        except Exception as e:
-            raise DirectDownloadLinkException(f'ERROR: {e.__class__.__name__}') from e
-        if 'error' in resp:
-            raise DirectDownloadLinkException(f"ERROR: {resp['msg']}")
-        return resp['file']
 
 def pcloud(url):
     with create_scraper() as session:
         try:
             res = session.get(url)
         except Exception as e:
-            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
-    if link := findall(r'.downloadlink.:..(https:.*)..', res.text):
-        return link[0].replace('\/', '/')
-    raise DirectDownloadLinkException("ERROR: Direct link not found")
-
-def tmpsend(url):
-    parsed_url = urlparse(url)
-    if any(x in parsed_url.path for x in ['thank-you','download']):
-        query_params = parse_qs(parsed_url.query)
-        if file_id := query_params.get('d'):
-            file_id = file_id[0]
-    elif not (file_id := parsed_url.path.strip('/')):
-
-
-        raise DirectDownloadLinkException("ERROR: Invalid URL format")
-    referer_url = f"https://tmpsend.com/thank-you?d={file_id}"
-    header = f"Referer: {referer_url}"
-    download_link = f"https://tmpsend.com/download?d={file_id}"
-    return download_link, header
-
-def qiwi(url):
-    """qiwi.gg link generator
-    based on https://github.com/aenulrofik"""
-    with Session() as session:
-        file_id = url.split("/")[-1]
-        try:
-            res = session.get(url).text
-        except Exception as e:
             raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
-        tree = HTML(res)
-        if name := tree.xpath('//h1[@class="page_TextHeading__VsM7r"]/text()'):
+    if link := findall(r".downloadlink.:..(https:.*)..", res.text):
+        return link[0].replace("\/", "/")
+    raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
 
-            ext = name[0].split('.')[-1]
-            return f"https://qiwi.lol/{file_id}.{ext}"
+
+# Added from other repositories
+# Untested
+def androiddatahost(url: str):
+    with create_scraper() as session:
+        try:
+            req = session.get(url).content
+            soup = BeautifulSoup(req, "html.parser")
+            link = soup.find("div", {"download2"})
+            direct_link = link.find("a")["href"]
+            return direct_link
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def apkadmin(url: str):
+    with create_scraper() as session:
+        try:
+            req = session.get(url).text
+            soup = BeautifulSoup(req, "lxml")
+            op = soup.find("input", {"name": "op"})["value"]
+            ids = soup.find("input", {"name": "id"})["value"]
+            post = session.post(
+                url,
+                data={
+                    "op": op,
+                    "id": ids,
+                    "rand": " ",
+                    "referer": " ",
+                    "method_free": " ",
+                    "method_premium": " ",
+                },
+            ).text
+            soup = BeautifulSoup(post, "lxml")
+            link = soup.find("div", {"class": "text text-center"})
+            direct_link = link.find("a")["href"]
+            return direct_link
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def sourceforge(url: str):
+    with Session() as session:
+        try:
+            if "master.dl.sourceforge.net" in url:
+                return f"{url}?viasf=1"
+            if url.endswith("/download"):
+                url = url.split("/download")[0]
+            try:
+                link = findall(r"\bhttps?://sourceforge\.net\S+", url)[0]
+            except IndexError:
+                raise DirectDownloadLinkException(
+                    "ERROR: Link SourceForge tidak ditemukan!"
+                )
+            file_id = findall(r"files(.*)", link)[0]
+            project = findall(r"projects?/(.*?)/files", link)[0]
+            req = session.get(
+                f"https://sourceforge.net/settings/mirror_choices?projectname={project}&filename={file_id}",
+            ).content
+            soup = BeautifulSoup(req, "html.parser")
+            mirror = soup.find("ul", {"id": "mirrorList"}).findAll("li")
+            for i in mirror[1:]:
+                direct_link = f"https://{i['id']}.dl.sourceforge.net/project/{project}/{file_id}?viasf=1"
+            return direct_link
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def androidfilehost(url):
+    with Session() as session:
+        try:
+            try:
+                url = findall(r"\bhttps?://.*androidfilehost.*fid.*\S+", url)[0]
+            except IndexError:
+                raise DirectDownloadLinkException(
+                    "ERROR: Link AndroidFileHost tidak ditemukan!"
+                )
+            file_id = findall(r"\?fid=(.*)", url)[0]
+            cookies = session.get(url).cookies
+            post = session.post(
+                "https://androidfilehost.com/libs/otf/mirrors.otf.php",
+                headers={
+                    "User-Agent": userAgent,
+                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                    "Referer": f"https://androidfilehost.com/?fid={file_id}",
+                    "X-MOD-SBB-CTYPE": "xhr",
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+                data={
+                    "submit": "submit",
+                    "action": "getdownloadmirrors",
+                    "fid": file_id,
+                },
+                cookies=cookies,
+            ).json()
+            if link := post["MIRRORS"]:
+                direct_link = next(i for i in link if i["url"])["url"]
+                return direct_link
+            else:
+                raise Exception("ERROR: Link File tidak ditemukan!")
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def tusfiles(url: str):
+    with create_scraper() as session:
+        try:
+            req = session.get(url).text
+            soup = BeautifulSoup(req, "lxml")
+            input_ = soup.find_all("input")
+            file_id = input_[1]["value"]
+            post = session.post(
+                "https://tusfiles.com/",
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": userAgent,
+                },
+                data={"op": "download2", "id": file_id, "referer": url},
+                allow_redirects=False,
+            )
+            if direct_link := post.headers["location"]:
+                return direct_link
+            else:
+                raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def pandafiles(url: str):
+    with create_scraper() as session:
+        try:
+            file_id = search(r"(?://|\.)(pandafiles\.com)/([0-9a-zA-Z]+)", url)[2]
+            post = session.post(
+                url,
+                headers={"User-Agent": userAgent},
+                data={
+                    "op": "download2",
+                    "usr_login": "",
+                    "id": file_id,
+                    "referer": url,
+                    "method_free": "Free Download",
+                },
+            ).content
+            soup = BeautifulSoup(post)
+            direct_link = soup.find("div", {"id": "direct_link"}).find("a")["href"]
+            return direct_link
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def uploadhaven(url: str):
+    with Session() as session:
+        try:
+            req = session.get(url, headers={"User-Agent": userAgent}).text
+            soup = BeautifulSoup(req, "lxml")
+            d = soup.find("div", {"class": "alert alert-danger col-md-12"})
+            if d is not None:
+                hot1 = soup.find("div", {"class": "alert alert-danger col-md-12"})
+                hot_text = hot1.text.strip()
+                raise DirectDownloadLinkException(f"ERROR: {str(hot_text)}")
+            else:
+                for _ in range(6, 0, -1):
+                    sleep(1)
+                post = session.post(
+                    url,
+                    data={
+                        "_token": soup.find("input", {"name": "_token"})["value"],
+                        "key": soup.find("input", {"name": "key"})["value"],
+                        "time": soup.find("input", {"name": "time"})["value"],
+                        "hash": soup.find("input", {"name": "hash"})["value"],
+                        "type": "free",
+                    },
+                    headers={"User-Agent": userAgent},
+                ).text
+                soup = BeautifulSoup(post, "lxml")
+                direct_link = soup.find("div", class_="alert alert-success mb-0").find(
+                    "a"
+                )["href"]
+                return direct_link
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def uploadrar(url: str):
+    with Session() as session:
+        try:
+            file_id = url.strip("/ ").split("/")[-1]
+            post = session.post(
+                url,
+                headers={"User-Agent": userAgent, "Referer": url},
+                data={
+                    "op": "download2",
+                    "id": file_id,
+                    "rand": "",
+                    "method_free": "Free Download",
+                    "method_premium": "",
+                },
+            ).text
+            soup = BeautifulSoup(post, "lxml")
+            direct_link = soup.find("span", {"id": "direct_link"}).find("a").get("href")
+            return direct_link
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def romsget(url: str):
+    with Session() as session:
+        try:
+            req = session.get(url).text
+            soup = BeautifulSoup(req, "html.parser")
+            upos = soup.find("form", {"id": "download-form"}).get("action")
+            meid = soup.find("input", {"id": "mediaId"}).get("name")
+            try:
+                dlid = soup.find("button", {"data-callback": "onDLSubmit"}).get("dlid")
+            except:
+                dlid = soup.find("div", {"data-callback": "onDLSubmit"}).get("dlid")
+            post = session.post("https://www.romsget.io" + upos, data={meid: dlid}).text
+            soup = BeautifulSoup(post, "html.parser")
+            udl = soup.find("form", {"name": "redirected"}).get("action")
+            prm = soup.find("input", {"name": "attach"}).get("value")
+            direct_link = f"{udl}?attach={prm}"
+            return direct_link
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def hexupload(url: str):
+    with Session() as session:
+        try:
+            post = session.post(
+                url,
+                headers={
+                    "User-Agent": userAgent,
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-us,en;q=0.6",
+                    "Sec-Fetch-Mode": "navigate",
+                },
+                data={
+                    "op": "download2",
+                    "id": url.split("/")[-1],
+                    "rand": "",
+                    "referer": url,
+                    "method_free": "Free Download",
+                },
+            ).text
+            link = search(r"ldl.ld\('([^']+)", post)
+            if (
+                direct_link := b64decode(link.group(1))
+                .decode("utf-8")
+                .replace(" ", "%20")
+            ):
+                return direct_link
+            else:
+                raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+# Tested
+def alldebrid(url: str) -> str:
+    """
+    Source :
+    https://api.alldebrid.com/
+
+    Documentation :
+    https://docs.alldebrid.com/
+
+    Supported Sites :
+    https://alldebrid.com/hosts/
+    """
+    agent_name = "TelegramBot"  # Maybe we can add this on env? So its can customizable.
+    alldebrid_api = config_dict["ALLDEBRID_API"]
+    if len(alldebrid_api) == 0:
+        raise DirectDownloadLinkException("ERROR: ALLDEBRID_API tidak ditemukan!")
+    with Session() as session:
+        r = session.get(
+            "https://api.alldebrid.com/v4/link/unlock",
+            params={
+                "agent": agent_name,
+                "apikey": alldebrid_api,
+                "link": url,
+            },
+        )
+
+        if not r.ok:
+            raise DirectDownloadLinkException(f"ERROR: [{r.status_code}] {r.text}")
+
+        data = r.json()
+
+        if data["status"] == "success":
+            if data["data"]["host"] == "stream":
+                raise DirectDownloadLinkException(
+                    "ERROR: Tidak support stream! Gunakan perintah YT-DLP!"
+                )
+            return data["data"]["link"]
+
         else:
-            raise DirectDownloadLinkException("ERROR: File not found")
+            raise DirectDownloadLinkException(f"ERROR: {data['error']['message']}")
 
-def mp4upload(url):
+
+def pake(url: str) -> dict:
+    """
+    Source :
+    https://api.pake.tk/
+
+    Supported Sites :
+    - All sites based Dood
+    - All sites based Vidstream
+    """
+    with Session() as session:
+        try:
+            r = session.get(
+                "https://api.pake.tk/dood",
+                params={
+                    "url": url,
+                },
+            )
+
+            if not r.ok:
+                raise DirectDownloadLinkException(f"ERROR: [{r.status_code}] {r.text}")
+
+            data = r.json()
+
+            details = {"contents": [], "title": "", "total_size": 0}
+
+            details["title"] = f"{data['data']['title']}.mp4"
+
+            item = {
+                "path": ospath.join(details["title"]),
+                "filename": details["title"],
+                "url": f"https://dd-cdn.pakai.eu.org/download?url={data['data']['direct_link']}&title={details['title']}.mp4",
+            }
+
+            details["contents"].append(item)
+
+            return details
+
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def bigota(url: str) -> str:
+    """
+    Source :
+    https://github.com/aenulrofik/pikabot_v2/
+
+    Supported Sites :
+    https://bigota.d.miui.com/
+    """
+    return sub(
+        r"https?://(bigota|hugeota)\.d\.miui\.com", "https://cdn-ota.azureedge.net", url
+    )
+
+
+def yandex_disk(url: str) -> str:
+    """
+    Source :
+    https://github.com/aenulrofik/pikabot_v2/
+
+    Supported Sites :
+    - https://disk.yandex.ru/
+    - https://yadi.sk/
+    """
+    with Session() as session:
+        r = session.get(
+            "https://cloud-api.yandex.net/v1/disk/public/resources/download",
+            params={
+                "public_key": url,
+            },
+        )
+
+        if not r.ok:
+            raise DirectDownloadLinkException(f"ERROR: [{r.status_code}] {r.text}")
+
+        data = r.json()
+        return data["href"]
+
+
+def sfile(url: str) -> tuple:
+    """
+    Source :
+    https://github.com/aenulrofik/pikabot_v2/
+
+    Supported Sites :
+    https://sfile.mobi/
+    """
+    with Session() as session:
+        r = session.get(url)
+        if not r.ok:
+            raise DirectDownloadLinkException(f"ERROR: [{r.status_code}] {r.text}")
+
+        html = BeautifulSoup(r.text, "html.parser")
+        download_link = html.find("a", class_="w3-button w3-blue w3-round").get("href")
+
+        r = session.get(
+            download_link,
+            headers={
+                "Referer": url,
+                "User-Agent": userAgent,
+                "Cache-Control": "max-age=0",
+                "Upgrade-Insecure-Requests": "1",
+            },
+        )
+
+        if not r.ok:
+            raise DirectDownloadLinkException(f"ERROR: [{r.status_code}] {r.text}")
+
+        pattern = compile(
+            r"location\.href=this\.href\+\'&k=\'\+\'([a-f0-9]{1,32})\'(?:;return\sfalse;)?"
+        )
+        pattern_match = pattern.search(r.text)
+        if pattern_match:
+            pattern_match = pattern_match.group(1)
+        else:
+            pattern_match = ""
+
+        html = BeautifulSoup(r, "html.parser")
+        if direct_link := html.find("a", {"id": "download"}).get("href"):
+            return f"{direct_link}&k={pattern_match}", f"Referer: {download_link}"
+
+        else:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def qiwi(url: str) -> str:
+    """
+    Source :
+    https://github.com/aenulrofik/pikabot_v2/
+
+    Supported Sites :
+    https://qiwi.gg/
+    """
+    with Session() as session:
+        ids = url.split("/")[-1]
+
+        r = session.get(url)
+
+        if not r.ok:
+            raise DirectDownloadLinkException(f"ERROR: [{r.status_code}] {r.text}")
+
+        html = BeautifulSoup(r.text, "html.parser")
+        if name := html.find("h1", class_="page_TextHeading__VsM7r"):
+            ext = name.text.split(".")[-1]
+            return f"https://qiwi.lol/{ids}.{ext}"
+
+        else:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def mp4upload(url: str) -> tuple:
+    """
+    Source :
+    MLCOK
+
+    Supported Sites :
+    https://www.mp4upload.com/
+    """
     with Session() as session:
         try:
             url = url.replace("embed-", "")
-            req = session.get(url).text
-            tree = HTML(req)
-            inputs = tree.xpath("//input")
-            header = {"Referer": "https://www.mp4upload.com/"}
+            r = session.get(url)
+
+            if not r.ok:
+                raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+            soup = BeautifulSoup(r.text, "lxml")
+            inputs = soup.find_all("input")
             data = {input.get("name"): input.get("value") for input in inputs}
+
             if not data:
-                raise DirectDownloadLinkException("ERROR: File Not Found!")
-            post = session.post(
+                raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+            r = session.post(
                 url,
                 data=data,
                 headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+                    "User-Agent": userAgent,
                     "Referer": "https://www.mp4upload.com/",
                 },
-            ).text
-            tree = HTML(post)
-            inputs = tree.xpath('//form[@name="F1"]//input')
+            )
+
+            if not r.ok:
+                raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+            soup = BeautifulSoup(r.text, "lxml")
+            inputs = soup.find_all("form", {"name": "F1"})[0].find_all("input")
             data = {
                 input.get("name"): input.get("value").replace(" ", "")
                 for input in inputs
             }
-            if not data:
-                raise DirectDownloadLinkException("ERROR: File Not Found!")
-            data["referer"] = url
-            direct_link = session.post(url, data=data).url
-            return direct_link, header
-        except:
-            raise DirectDownloadLinkException("ERROR: File Not Found!")
 
-def berkasdrive(url):
-    """berkasdrive.com link generator
-    by https://github.com/aenulrofik"""
+            if not data:
+                raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+            data["referer"] = url
+
+            direct_link = session.post(url, data=data).url
+
+            return direct_link, {"Referer": "https://www.mp4upload.com/"}
+
+        except:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def berkasdrive(url: str) -> str:
+    """
+    Source :
+    https://github.com/aenulrofik/pikabot_v2/
+
+    Supported Sites :
+    https://berkasdrive.com/
+    """
     with Session() as session:
-        try:
-            sesi = session.get(url).text
-        except Exception as e:
-            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
-    html = HTML(sesi)
-    if link := html.xpath("//script")[0].text.split('"')[1]:
-        return b64decode(link).decode("utf-8")
-    else:
-        raise DirectDownloadLinkException("ERROR: File Not Found!")
+        r = session.get(url)
+
+        if not r.ok:
+            raise DirectDownloadLinkException(f"ERROR: [{r.status_code}] {r.text}")
+
+        html = HTML(r.text)
+        if direct_link := html.xpath("//script")[0].text.split('"')[1]:
+            return b64decode(direct_link).decode("UTF-8")
+
+        else:
+            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
+
+
+def sharepoint(url: str) -> str:
+    """
+    Source :
+    https://github.com/aenulrofik/pikabot_v2/
+
+    Supported Sites :
+    https://www.microsoft.com/ (SharePoint)
+    """
+    url = sub("e=[\w]+", "", url)
+    url = url.replace("??", "?")
+    if not search(r"download=1", url):
+        if "?" in url:
+            url += "&"
+        else:
+            url += "?"
+        url += "download=1"
+    return url
