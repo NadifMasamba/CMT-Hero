@@ -758,7 +758,7 @@ def gofile(url):
             _password = ""
         _id = url.split("/")[-1]
     except Exception as e:
-        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
 
     def __get_token(session):
         headers = {
@@ -767,7 +767,7 @@ def gofile(url):
             "Accept": "*/*",
             "Connection": "keep-alive",
         }
-        __url = "https://api.gofile.io/accounts"
+        __url = "https://api.gofile.io/createAccount"
         try:
             __res = session.post(__url, headers=headers).json()
             if __res["status"] != "ok":
