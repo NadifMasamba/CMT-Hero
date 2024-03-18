@@ -1,5 +1,4 @@
 from base64 import b64decode
-from bs4 import BeautifulSoup
 from cloudscraper import create_scraper
 from hashlib import sha256
 from http.cookiejar import MozillaCookieJar
