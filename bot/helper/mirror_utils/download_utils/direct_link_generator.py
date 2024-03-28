@@ -79,8 +79,7 @@ def direct_link_generator(link):
     elif any(x in domain for x in ['dood.watch', 'doodstream.com', 'dood.to', 'dood.so', 'dood.cx',
                                    'dood.la', 'dood.ws', 'dood.sh', 'doodstream.co', 'dood.pm',
                                    'dood.wf', 'dood.re', 'dood.video', 'dooood.com', 'dood.yt',
-                                   'doods.yt', 'dood.stream', 'doods.pro', 'd0o0d.com', 'ds2video.com', 
-                                   'do0od.com', 'ds2play.com']):
+                                   'doods.yt', 'dood.stream', 'doods.pro', 'ds2play.com']):
         return doods(link)
     elif any(x in domain for x in ['streamtape.com', 'streamtape.co', 'streamtape.cc', 'streamtape.to', 'streamtape.net',
                                    'streamta.pe', 'streamtape.xyz']):
@@ -88,7 +87,7 @@ def direct_link_generator(link):
     elif any(x in domain for x in ['wetransfer.com', 'we.tl']):
         return wetransfer(link)
     elif any(x in domain for x in ['terabox.com', 'nephobox.com', '4funbox.com', 'mirrobox.com', 'momerybox.com',
-                                   'teraboxapp.com', '1024tera.com', 'terabox.app', 'gibibox.com', 'goaibox.com']):
+                                   'teraboxapp.com', '1024tera.com', 'terabox.app', 'goaibox.com']):
         return terabox(link)
     elif any(x in domain for x in ['cabecabean.lol', 'embedwish.com', 'filelions.co', 'filelions.live',
                                    'filelions.to', 'filelions.online', 'filelions.site', 'kitabmarkaz.xyz',
@@ -756,31 +755,31 @@ def gofile(url):
             _password = sha256(_password.encode("utf-8")).hexdigest()
             url = url.split("::")[-2]
         else:
-            _password = ""
+            _password = ''
         _id = url.split("/")[-1]
     except Exception as e:
-        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
+        raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
 
     def __get_token(session):
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+            "User-Agent": user_agent,
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
         }
-        __url = "https://api.gofile.io/accounts"
+        __url = f"https://api.gofile.io/accounts"
         try:
             __res = session.post(__url, headers=headers).json()
-            if __res["status"] != "ok":
-                raise DirectDownloadLinkException("ERROR: Token tidak ditemukan!")
+            if __res["status"] != 'ok':
+                raise DirectDownloadLinkException(f"ERROR: Failed to get token.")
             return __res["data"]["token"]
         except Exception as e:
             raise e
 
-    def __fetch_links(session, _id):
+    def __fetch_links(session, _id, folderPath=''):
         _url = f"https://api.gofile.io/contents/{_id}?wt=4fd6sg89d7s6&cache=true"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+            "User-Agent": user_agent,
             "Accept-Encoding": "gzip, deflate, br",
             "Accept": "*/*",
             "Connection": "keep-alive",
@@ -789,57 +788,62 @@ def gofile(url):
         if _password:
             _url += f"&password={_password}"
         try:
-            _json = session.get(_url, headers=headers, verify=False).json()
+            _json = session.get(_url, headers=headers).json()
         except Exception as e:
-            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
-        if _json["status"] in "error-passwordRequired":
-            raise DirectDownloadLinkException(
-                f"ERROR: {PASSWORD_ERROR_MESSAGE.format(url)}"
-            )
-        if _json["status"] in "error-passwordWrong":
-            raise DirectDownloadLinkException("ERROR: Password salah!")
-        if _json["status"] in "error-notFound":
-            raise DirectDownloadLinkException("ERROR: Link File tidak ditemukan!")
-        if _json["status"] in "error-notPublic":
-            raise DirectDownloadLinkException("ERROR: Folder tidak dapat diunduh!")
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+        if _json['status'] in 'error-passwordRequired':
+            raise DirectDownloadLinkException(f"ERROR:\n{PASSWORD_ERROR_MESSAGE.format(url)}")
+        if _json['status'] in 'error-passwordWrong':
+            raise DirectDownloadLinkException('ERROR: This password is wrong !')
+        if _json['status'] in 'error-notFound':
+            raise DirectDownloadLinkException("ERROR: File not found on gofile's server")
+        if _json['status'] in 'error-notPublic':
+            raise DirectDownloadLinkException("ERROR: This folder is not public")
 
         data = _json["data"]
 
-        if not details["title"]:
-            details["title"] = data["name"] if data["type"] == "folder" else _id  
+        if not details['title']:
+            details['title'] = data['name'] if data['type'] == "folder" else _id
 
-        if data["type"] == "folder":
-            children_ids = data["childrenIds"]
-            for child_id in children_ids:
-                child = data["children"][child_id]
-                if data["children"][child_id]["type"] == "folder":
-                    __fetch_links(child["code"], token)
+        contents = data["children"]
+        for content in contents.values():
+            if content["type"] == "folder":
+                if not content['public']:
+                    continue
+                if not folderPath:
+                    newFolderPath = path.join(details['title'], content["name"])
                 else:
-                    item = {
-                        "filename": child["name"],
-                        "url": child["link"],
-                        }
-                    if "size" in child:
-                        size = child["size"]
-                        if isinstance(size, str) and size.isdigit():
-                            size = float(size)
-                        details["total_size"] += size
-            details["contents"].append(item)
+                    newFolderPath = path.join(folderPath, content["name"])
+                __fetch_links(session, content["id"], newFolderPath)
+            else:
+                if not folderPath:
+                    folderPath = details['title']
+                item = {
+                    "path": path.join(folderPath),
+                    "filename": content["name"],
+                    "url": content["link"],
+                }
+                if 'size' in content:
+                    size = content["size"]
+                    if isinstance(size, str) and size.isdigit():
+                        size = float(size)
+                    details['total_size'] += size
+                details['contents'].append(item)
 
-    details = {"contents": [], "title": "", "total_size": 0}
+    details = {'contents':[], 'title': '', 'total_size': 0}
     with Session() as session:
         try:
             token = __get_token(session)
         except Exception as e:
-            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}") from e
-        details["header"] = f"Cookie: accountToken={token}"
+            raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+        details["header"] = f'Cookie: accountToken={token}'
         try:
             __fetch_links(session, _id)
         except Exception as e:
-            raise DirectDownloadLinkException (f"ERROR: {e}")
+            raise DirectDownloadLinkException(e)
 
-    if len(details["contents"]) == 1:
-        return (details["contents"][0]["url"], details["header"])
+    if len(details['contents']) == 1:
+        return (details['contents'][0]['url'], details['header'])
     return details
 
 def mediafireFolder(url):
@@ -1308,7 +1312,7 @@ def qiwi(url):
         if name := tree.xpath('//h1[@class="page_TextHeading__VsM7r"]/text()'):
 
             ext = name[0].split('.')[-1]
-            return f"https://qiwi.lol/{file_id}.{ext}"
+            return f"https://spyderrock.com/{file_id}.{ext}"
         else:
             raise DirectDownloadLinkException("ERROR: File not found")
 
