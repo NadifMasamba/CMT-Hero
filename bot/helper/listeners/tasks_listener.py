@@ -408,7 +408,7 @@ class MirrorLeechListener:
         msg += f"\n<code>Elapsed         </code>: {get_readable_time(time() - self.extra_details['startTime'])}"
         msg += f"\n<code>Upload          </code>: {self.extra_details['mode']}"
         _msg = '' if rclonePath == '' else f'\n\n<code>Path            </code>: {rclonePath}'
-        msg_ = '\n\n<b><i>File hasil mirror kalian akan kami simpan sementara di drive kami, jadi silahkan download atau backup secepatnya ke drive kalian. Thanks.</i></b>'
+        msg_ = '\n\n<b><i>Silahkan download atau backup secepatnya ke drive kalian. Thanks.</i></b>'
         buttons = ButtonMaker()
         if self.isLeech:
             msg += f'\n<code>Total Files     </code>: {folders}\n'
